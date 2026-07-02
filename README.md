@@ -6,6 +6,8 @@ memory and relationships; together they gather food, migrate, form families,
 found settlements, grow cultures, discover technology, open trade routes, wage
 war, survive disease and disasters, and sometimes collapse.
 
+Live demo: https://catpockets.github.io/Dawnline/
+
 ## Run it
 
 **Fastest:** open `dist/index.html` in any modern browser. It's a fully
@@ -33,6 +35,8 @@ npm run build        # Vite single-file production build
 Pushes to `main` deploy Dawnline to GitHub Pages with the workflow in
 `.github/workflows/pages.yml`. The workflow runs the engine test, builds the
 dependency-free standalone app, and publishes `dist/`.
+
+Published site: https://catpockets.github.io/Dawnline/
 
 In GitHub, set **Settings → Pages → Build and deployment → Source** to
 **GitHub Actions**.
