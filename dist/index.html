@@ -2117,7 +2117,8 @@ class Renderer {
       ctx.fill();
     }
 
-    // --- settlements: glow disc + ring + population label ---
+    // --- settlements: glow disc + ring ---
+    const cityLabels = [];
     for (const s of sim.settlements) {
       if (s.dead) continue;
       const R = 0.7 + Math.sqrt(s.members) * 0.22;
@@ -2135,15 +2136,7 @@ class Renderer {
         ctx.lineWidth = 0.1;
         ctx.strokeRect(s.x - R - 0.3, s.y - R - 0.3, (R + 0.3) * 2, (R + 0.3) * 2);
       }
-      if (v.scale > 5.5) {
-        ctx.font = '0.9px "Segoe UI", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(240, 245, 255, 0.92)';
-        ctx.fillText(s.name, s.x, s.y - R - 0.5);
-        ctx.font = '0.65px "Segoe UI", sans-serif';
-        ctx.fillStyle = 'rgba(190, 205, 225, 0.75)';
-        ctx.fillText(`${s.members} · ${s.archetype}`, s.x, s.y + R + 1.0);
-      }
+      if (v.scale > 5.5) cityLabels.push({ x: s.x, y: s.y - R - 0.55, name: s.name });
     }
 
     // --- transient flashes: fights, wars, disasters ---
@@ -2161,12 +2154,6 @@ class Renderer {
         ctx.strokeStyle = `rgba(255, 60, 90, ${0.8 - t * 0.8})`;
         ctx.lineWidth = 0.3;
         ctx.beginPath(); ctx.arc(f.x, f.y, (f.r || 9) * (0.4 + t * 0.8), 0, 6.283); ctx.stroke();
-        if (v.scale > 4 && f.label) {
-          ctx.font = '1.1px "Segoe UI", sans-serif';
-          ctx.fillStyle = `rgba(255, 120, 120, ${1 - t})`;
-          ctx.textAlign = 'center';
-          ctx.fillText(f.label.toUpperCase(), f.x, f.y - (f.r || 9) * 0.5);
-        }
       }
     }
 
@@ -2188,6 +2175,24 @@ class Renderer {
       }
     }
     ctx.restore();
+
+    if (cityLabels.length) {
+      ctx.save();
+      ctx.font = '600 13px "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.lineJoin = 'round';
+      ctx.miterLimit = 2;
+      for (const label of cityLabels) {
+        const [sx, sy] = this.worldToScreen(label.x, label.y);
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = 'rgba(5, 8, 15, 0.78)';
+        ctx.strokeText(label.name, sx, sy);
+        ctx.fillStyle = 'rgba(246, 249, 255, 0.96)';
+        ctx.fillText(label.name, sx, sy);
+      }
+      ctx.restore();
+    }
   }
 
   /** Hit-test a click: nearest agent within ~1 tile, else settlement. */
