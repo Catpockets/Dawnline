@@ -28,6 +28,15 @@ npm run dev          # Vite dev server on real React 18
 npm run build        # Vite single-file production build
 ```
 
+## Deploy it
+
+Pushes to `main` deploy Dawnline to GitHub Pages with the workflow in
+`.github/workflows/pages.yml`. The workflow runs the engine test, builds the
+dependency-free standalone app, and publishes `dist/`.
+
+In GitHub, set **Settings → Pages → Build and deployment → Source** to
+**GitHub Actions**.
+
 ## How it works
 
 | Layer | File | What it does |
@@ -38,7 +47,7 @@ npm run build        # Vite single-file production build
 | Settlements | `src/engine/settlements.js` | Culture drift, tech discoveries, buildings, births, stability, rule-based archetype classification |
 | Orchestrator | `src/engine/simulation.js` | Tick pipeline: climate → regen → spatial grid → agents → settlements → trade/diplomacy/war → disease → disasters → analytics |
 | Renderer | `src/render/renderer.js` | Canvas: pre-rendered terrain, heat-map overlays, routes, trails, agents, flashes; zoom/pan |
-| UI | `src/App.jsx`, `src/ui/*` | React panels only — controls, analytics, charts, inspector, event log |
+| UI | `src/App.js`, `src/ui/*` | React panels only — controls, analytics, charts, inspector, event log |
 
 Key architecture rule: **React never holds per-agent state.** The engine lives in
 a ref, the canvas repaints every frame via requestAnimationFrame, and React
