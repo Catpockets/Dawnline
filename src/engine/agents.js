@@ -436,13 +436,17 @@ export function updateAgent(sim, a) {
     sim.maybeFound(a);
     // or join a nearby settlement if it'll have us (sociability-gated)
     if (a.home < 0 && a.sociability > 0.3) {
+      let best = null, bestScore = 0.45;
       for (const s of sim.settlements) {
         if (s.dead) continue;
-        if (dist2(a.x, a.y, s.x, s.y) < 64 && s.members < 25 + s.buildings.huts * 10) {
-          a.home = s.id;
-          remember(a, `joined ${s.name}`);
-          break;
-        }
+        const score = sim.settlementJoinScore ? sim.settlementJoinScore(a, s) : 0;
+        if (score > bestScore) { bestScore = score; best = s; }
+      }
+      if (best) {
+        a.home = best.id;
+        remember(a, `joined ${best.name}`);
+        a.refugeeCulture = null;
+        a.refugeeFrom = null;
       }
     }
   }

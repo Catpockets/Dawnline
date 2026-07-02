@@ -6,7 +6,7 @@
 // Deliberately kept outside React: the UI only reads snapshots from it.
 // ---------------------------------------------------------------------------
 import { mulberry32, hashSeed, clamp, dist2, pick } from './rng.js';
-import { generateWorld, TERRAIN, tileIndex, walkable, findBestTile } from './world.js';
+import { generateWorld, TERRAIN, tileIndex, walkable, findBestTile, travelCost } from './world.js';
 import { createAgent, updateAgent, nearbyAgents, remember, TICKS_PER_YEAR } from './agents.js';
 import {
   createSettlement, updateSettlement, contributeBuild as buildContribute,
@@ -160,14 +160,19 @@ export class Simulation {
     const downfall = this.getCollapseDownfall(s);
     this.addEvent(`${s.name} has COLLAPSED — ${downfall.label.toLowerCase()}; survivors scatter`, 'bad');
     const w = this.world;
+    let refugees = 0, casualties = 0;
     for (const a of this.agents) {
       if (a.dead || a.home !== s.id) continue;
       a.home = -1;
       a.fear = 70;
+      a.refugeeCulture = dominantCulture(s);
+      a.refugeeFrom = s.name;
+      a.refugeeTick = this.tick;
       remember(a, `${s.name} collapsed`);
-      if (this.rand() < 0.12) this.killAgent(a, 'collapse'); // chaos casualties
-      else { a.state = 'migrating'; a.stateT = 0; a.hasTarget = false; }
+      if (this.rand() < 0.12) { this.killAgent(a, 'collapse'); casualties++; } // chaos casualties
+      else { a.state = 'migrating'; a.stateT = 0; a.hasTarget = false; refugees++; }
     }
+    s.lastDisplaced = { refugees, casualties };
     w.danger[tileIndex(w, s.x, s.y)] = clamp(w.danger[tileIndex(w, s.x, s.y)] + 0.25, 0, 1);
     this.removeSettlement(s, downfall.key);
   }
@@ -200,7 +205,13 @@ export class Simulation {
       year: (this.tick / TICKS_PER_YEAR) | 0,
       cause: info.label,
       icon: '☠',
-      color: info.color
+      color: info.color,
+      finalMembers: s.members,
+      stability: (s.stability * 100) | 0,
+      foodStore: s.foodStore | 0,
+      refugees: s.lastDisplaced?.refugees || 0,
+      casualties: s.lastDisplaced?.casualties || 0,
+      summary: ruinSummary(s, info)
     });
     if (this.ruins.length > RUIN_CAP) this.ruins.shift();
   }
@@ -302,6 +313,104 @@ export class Simulation {
     for (const s of this.settlements) if (s.members > 0) s.avgWealth /= s.members;
   }
 
+  updateSettlementEconomy(s) {
+    const profile = this.localResourceProfile(s, 7);
+    s.resourceProfile = profile;
+    const labor = Math.sqrt(Math.max(1, s.members));
+    s.foodStore += clamp(profile.food / 35, 0, 2.4) * labor * 0.35;
+    s.woodStore += clamp(profile.wood / 55, 0, 1.8) * labor * 0.16;
+    s.stoneStore += clamp(profile.stone / 45, 0, 1.8) * labor * 0.10;
+    if (s.tech >= 4 || s.buildings.workshop > 0) s.metalStore += clamp(profile.metal / 38, 0, 1.6) * labor * 0.07;
+    if (profile.gems > 0) {
+      const luxury = clamp(profile.gems / 18, 0, 1.4) * labor * 0.025;
+      s.luxuryStore += luxury;
+      s.wealth += luxury * (0.5 + s.culture.commercial);
+    }
+    if (profile.water < 24) s.stability -= 0.0025;
+    else if (profile.river > 0.08 || profile.water > 70) s.stability += 0.0015;
+  }
+
+  localResourceProfile(s, radius) {
+    const w = this.world;
+    const x0 = Math.max(0, (s.x | 0) - radius), x1 = Math.min(w.w - 1, (s.x | 0) + radius);
+    const y0 = Math.max(0, (s.y | 0) - radius), y1 = Math.min(w.h - 1, (s.y | 0) + radius);
+    const out = { food: 0, wood: 0, stone: 0, metal: 0, gems: 0, water: 0, river: 0 };
+    let weight = 0;
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const d = Math.hypot(x - s.x, y - s.y);
+        if (d > radius) continue;
+        const k = 1 - d / (radius + 0.5);
+        const i = y * w.w + x;
+        out.food += w.maxFood[i] * k;
+        out.wood += w.wood[i] * k;
+        out.stone += w.stone[i] * k;
+        out.metal += w.metal[i] * k;
+        out.gems += w.gems[i] * k;
+        out.water += w.water[i] * k;
+        out.river += (w.river[i] || 0) * k;
+        weight += k;
+      }
+    }
+    if (weight <= 0) return out;
+    for (const key of Object.keys(out)) out[key] /= weight;
+    return out;
+  }
+
+  settlementResourceState(s) {
+    const pop = Math.max(1, s.members);
+    const foodPerCapita = s.foodStore / pop;
+    const woodTarget = 0.45 * pop + s.buildings.huts * 2;
+    const stoneTarget = 0.28 * pop + s.buildings.walls * 4;
+    const metalTarget = (s.tech >= 6 ? 8 : 3) + s.buildings.workshop * 4;
+    return {
+      foodNeed: clamp((1.4 - foodPerCapita) / 1.4, 0, 1.8),
+      foodSurplus: clamp((foodPerCapita - 2.2) / 2.8, 0, 1.8),
+      woodNeed: clamp((woodTarget - s.woodStore) / (woodTarget + 1), 0, 1.2),
+      woodSurplus: clamp((s.woodStore - woodTarget * 1.7) / (woodTarget * 1.7 + 1), 0, 1.5),
+      stoneNeed: clamp((stoneTarget - s.stoneStore) / (stoneTarget + 1), 0, 1.2),
+      stoneSurplus: clamp((s.stoneStore - stoneTarget * 1.6) / (stoneTarget * 1.6 + 1), 0, 1.5),
+      metalNeed: clamp((metalTarget - (s.metalStore || 0)) / (metalTarget + 1), 0, 1.2),
+      metalSurplus: clamp(((s.metalStore || 0) - metalTarget * 1.5) / (metalTarget * 1.5 + 1), 0, 1.5),
+      luxurySurplus: clamp(((s.luxuryStore || 0) - 3) / 12, 0, 1.5)
+    };
+  }
+
+  scarcityPressure(state) {
+    return state.foodNeed * 1.7 + state.woodNeed * 0.35 + state.stoneNeed * 0.3 + state.metalNeed * 0.35;
+  }
+
+  cultureCompatibility(A, B) {
+    let score = 0.45;
+    const a = dominantCulture(A), b = dominantCulture(B);
+    if (a === b) score += 0.22;
+    score += (A.culture.commercial + B.culture.commercial) * 0.18;
+    score += (A.culture.peaceful + B.culture.peaceful + A.culture.communal + B.culture.communal) * 0.08;
+    score -= (A.culture.isolationist + B.culture.isolationist) * 0.14;
+    score -= Math.abs(A.culture.authoritarian - B.culture.authoritarian) * 0.10;
+    return clamp(score, 0, 1.2);
+  }
+
+  settlementJoinScore(a, s) {
+    const capacity = 25 + s.buildings.huts * 10;
+    if (s.members >= capacity || s.stability < 0.18) return -1;
+    const d = Math.sqrt(dist2(a.x, a.y, s.x, s.y));
+    if (d > 8) return -1;
+    let score = 1 - d / 8 + s.stability * 0.55 + s.culture.communal * 0.25 + s.culture.peaceful * 0.15;
+    score -= s.culture.isolationist * 0.35;
+    if (a.refugeeCulture) score += (s.culture[a.refugeeCulture] || 0) * 0.85;
+    if (a.refugeeCulture && dominantCulture(s) === a.refugeeCulture) score += 0.25;
+    return score;
+  }
+
+  resourceComplement(a, b) {
+    return a.foodNeed * b.foodSurplus + b.foodNeed * a.foodSurplus +
+      (a.woodNeed * b.woodSurplus + b.woodNeed * a.woodSurplus) * 0.45 +
+      (a.stoneNeed * b.stoneSurplus + b.stoneNeed * a.stoneSurplus) * 0.4 +
+      (a.metalNeed * b.metalSurplus + b.metalNeed * a.metalSurplus) * 0.55 +
+      (a.luxurySurplus + b.luxurySurplus) * 0.12;
+  }
+
   // ---- trade routes + relations drift (the diplomacy layer) ----
   updateTradeAndDiplomacy() {
     const P = this.params;
@@ -310,37 +419,35 @@ export class Simulation {
       for (let j = i + 1; j < live.length; j++) {
         const A = live[i], B = live[j];
         const d = Math.sqrt(dist2(A.x, A.y, B.x, B.y));
-        if (d > 55) continue;
+        if (d > 70) continue;
         const rel = A.relations.get(B.id) || 0;
+        const stateA = this.settlementResourceState(A);
+        const stateB = this.settlementResourceState(B);
+        const complement = this.resourceComplement(stateA, stateB);
+        const compat = this.cultureCompatibility(A, B);
+        const pressure = Math.max(this.scarcityPressure(stateA), this.scarcityPressure(stateB));
 
-        // --- trade formation: commercial cultures + friendliness param ---
-        const tradeDrive = (A.culture.commercial + B.culture.commercial) / 2 *
-          P.tradeFriendliness * (rel > -0.2 ? 1 : 0);
+        // --- trade formation: culture fit + concrete resource complement ---
+        let tradeDrive = ((A.culture.commercial + B.culture.commercial) * 0.3 +
+          compat * 0.45 + complement * 0.75 + pressure * 0.18) * P.tradeFriendliness + rel * 0.25;
+        if (rel < -0.55) tradeDrive *= 0.35;
+        if (d > 55) tradeDrive -= (d - 55) * 0.018;
         const key = A.id < B.id ? `${A.id}-${B.id}` : `${B.id}-${A.id}`;
         let route = this.routes.get(key);
-        if (tradeDrive > 0.28 && d < 48) {
-          if (!route) {
-            route = { a: A.id, b: B.id, strength: 0.1 };
-            this.routes.set(key, route);
-            A.tradePartners.add(B.id); B.tradePartners.add(A.id);
-            this.addEvent(`Trade opens: ${A.name} ↔ ${B.name}`, 'good');
-          }
+        const capA = 4 + Math.round(A.culture.commercial * 4) + (stateA.foodNeed > 0.55 ? 2 : 0);
+        const capB = 4 + Math.round(B.culture.commercial * 4) + (stateB.foodNeed > 0.55 ? 2 : 0);
+        if (!route && (A.tradePartners.size >= capA || B.tradePartners.size >= capB)) tradeDrive -= 0.45;
+        if (tradeDrive > 0.82 && d < 64) {
+          route = this.ensureTradeRoute(A, B, key, route);
+          if (!route) continue;
           route.strength = clamp(route.strength + 0.06, 0, 1);
-          // exchange: food flows to the hungrier side, wealth flows back
-          const donor = A.foodStore / (A.members + 1) > B.foodStore / (B.members + 1) ? A : B;
-          const taker = donor === A ? B : A;
-          const flow = Math.min(donor.foodStore * 0.06, 12) * route.strength;
-          donor.foodStore -= flow; taker.foodStore += flow;
-          donor.wealth += flow * 0.5; taker.wealth = Math.max(0, taker.wealth - flow * 0.3);
+          this.exchangeTrade(A, B, stateA, stateB, route);
           // trading improves relations
-          const nr = clamp(rel + 0.03, -1, 1);
+          const nr = clamp(rel + 0.02 + compat * 0.012, -1, 1);
           A.relations.set(B.id, nr); B.relations.set(A.id, nr);
         } else if (route) {
           route.strength -= 0.05;
-          if (route.strength <= 0.03) {
-            this.routes.delete(key);
-            A.tradePartners.delete(B.id); B.tradePartners.delete(A.id);
-          }
+          if (route.strength <= 0.03) this.closeTradeRoute(A, B, key);
         }
 
         // --- relations drift: proximity + culture friction ---
@@ -348,6 +455,8 @@ export class Simulation {
         const friction = (A.culture.expansionist + B.culture.expansionist) * 0.5;
         if (d < 20 && friction > 0.5) drift -= 0.02 * P.aggression;      // border tension
         if (A.culture.peaceful > 0.55 && B.culture.peaceful > 0.55) drift += 0.015;
+        if (complement > 0.45 && route) drift += 0.012;
+        if (pressure > 1.25 && !route && compat < 0.45) drift -= 0.018 * P.aggression;
         const nr = clamp(rel + drift, -1, 1);
         A.relations.set(B.id, nr); B.relations.set(A.id, nr);
 
@@ -360,25 +469,132 @@ export class Simulation {
     }
   }
 
+  ensureTradeRoute(A, B, key, route) {
+    if (route) {
+      if (!route.path) route.path = this.findTradePath(A, B);
+      return route.path ? route : null;
+    }
+    const path = this.findTradePath(A, B);
+    if (!path) return null;
+    route = { a: A.id, b: B.id, strength: 0.1, path };
+    this.routes.set(key, route);
+    A.tradePartners.add(B.id); B.tradePartners.add(A.id);
+    this.addEvent(`Trade opens: ${A.name} ↔ ${B.name}`, 'good');
+    return route;
+  }
+
+  closeTradeRoute(A, B, key) {
+    this.routes.delete(key);
+    A.tradePartners.delete(B.id); B.tradePartners.delete(A.id);
+  }
+
+  exchangeTrade(A, B, stateA, stateB, route) {
+    const move = (donor, taker, store, amount, price) => {
+      const available = Math.max(0, donor[store] - amount.reserve);
+      const flow = Math.min(available, amount.max) * route.strength;
+      if (flow <= 0.05) return 0;
+      donor[store] -= flow;
+      taker[store] += flow;
+      const payment = flow * price;
+      taker.wealth = Math.max(0, taker.wealth - payment);
+      donor.wealth += payment;
+      return flow;
+    };
+    const tradePair = (needA, surplusA, needB, surplusB, store, reserve, max, price) => {
+      if (needA > needB && surplusB > 0.02) return move(B, A, store, { reserve, max: max * needA }, price);
+      if (needB > needA && surplusA > 0.02) return move(A, B, store, { reserve, max: max * needB }, price);
+      return 0;
+    };
+    const foodMoved = tradePair(stateA.foodNeed, stateA.foodSurplus, stateB.foodNeed, stateB.foodSurplus,
+      'foodStore', 8, 16, 0.45);
+    tradePair(stateA.woodNeed, stateA.woodSurplus, stateB.woodNeed, stateB.woodSurplus, 'woodStore', 4, 5, 0.25);
+    tradePair(stateA.stoneNeed, stateA.stoneSurplus, stateB.stoneNeed, stateB.stoneSurplus, 'stoneStore', 3, 4, 0.32);
+    tradePair(stateA.metalNeed, stateA.metalSurplus, stateB.metalNeed, stateB.metalSurplus, 'metalStore', 1, 2.5, 0.8);
+    if (stateA.luxurySurplus > 0.1 && B.wealth > 8) move(A, B, 'luxuryStore', { reserve: 1, max: 1.4 }, 1.4);
+    if (stateB.luxurySurplus > 0.1 && A.wealth > 8) move(B, A, 'luxuryStore', { reserve: 1, max: 1.4 }, 1.4);
+    if (foodMoved > 4 && (A.famineT > 18 || B.famineT > 18) && this.tick - (route.lastAid || -999) > 120) {
+      route.lastAid = this.tick;
+      const hungry = A.famineT > B.famineT ? A : B;
+      this.addEvent(`Food convoy reaches ${hungry.name}`, 'good');
+    }
+  }
+
+  findTradePath(A, B) {
+    const w = this.world;
+    const sx = clamp(A.x | 0, 0, w.w - 1), sy = clamp(A.y | 0, 0, w.h - 1);
+    const gx = clamp(B.x | 0, 0, w.w - 1), gy = clamp(B.y | 0, 0, w.h - 1);
+    if (!Number.isFinite(travelCost(w, sx, sy)) || !Number.isFinite(travelCost(w, gx, gy))) return null;
+    const start = sy * w.w + sx, goal = gy * w.w + gx;
+    const n = w.w * w.h;
+    const gScore = new Float32Array(n);
+    gScore.fill(Infinity);
+    const came = new Int32Array(n);
+    came.fill(-1);
+    const closed = new Uint8Array(n);
+    const heap = [];
+    const heuristic = (x, y) => Math.hypot(x - gx, y - gy);
+    gScore[start] = 0;
+    heapPush(heap, [heuristic(sx, sy), start]);
+    let expanded = 0;
+
+    while (heap.length && expanded < 7000) {
+      const [, cur] = heapPop(heap);
+      if (closed[cur]) continue;
+      if (cur === goal) return simplifyPath(reconstructPath(w, came, start, goal, A, B));
+      closed[cur] = 1;
+      expanded++;
+      const cx = cur % w.w, cy = (cur / w.w) | 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = cx + dx, ny = cy + dy;
+          if (nx < 0 || ny < 0 || nx >= w.w || ny >= w.h) continue;
+          const j = ny * w.w + nx;
+          if (closed[j]) continue;
+          const tileCost = travelCost(w, nx, ny);
+          if (!Number.isFinite(tileCost)) continue;
+          const step = tileCost * (dx !== 0 && dy !== 0 ? 1.414 : 1);
+          const ng = gScore[cur] + step;
+          if (ng >= gScore[j]) continue;
+          came[j] = cur;
+          gScore[j] = ng;
+          heapPush(heap, [ng + heuristic(nx, ny), j]);
+        }
+      }
+    }
+    return null;
+  }
+
   // ---- settlement-scale raids/war (abstracted; agent fights are separate) --
   updateWar() {
     const P = this.params;
     const live = this.settlements.filter(s => !s.dead && s.members > 4);
     for (const s of live) {
-      const warDrive = (s.culture.militaristic * 0.7 + (s.famineT > 25 ? 0.45 : 0) +
-        s.culture.expansionist * 0.25) * P.aggression;
-      if (warDrive < 0.5 || this.rand() > warDrive * 0.35) continue;
+      const needs = this.settlementResourceState(s);
+      const pressure = this.scarcityPressure(needs) + (s.famineT > 12 ? 0.45 : 0);
+      const restraint = s.culture.peaceful * 0.35 + s.culture.commercial * 0.18;
+      const warDrive = (s.culture.militaristic * 0.65 + s.culture.expansionist * 0.32 +
+        pressure * 0.45 - restraint) * P.aggression;
+      if (warDrive < 0.45 || this.rand() > warDrive * 0.28) continue;
       if (this.tick - s.lastRaid < 90) continue;
 
-      // choose the weakest disliked neighbour
+      // choose the weakest neighbour with resources this settlement lacks
       let target = null, bestScore = 0;
       for (const t of live) {
         if (t.id === s.id) continue;
         const d = Math.sqrt(dist2(s.x, s.y, t.x, t.y));
-        if (d > 45) continue;
+        if (d > 52) continue;
         const rel = s.relations.get(t.id) || 0;
-        if (rel > 0.25) continue; // won't raid friends
-        const score = (1 - rel) * (t.foodStore + t.wealth) / (1 + t.defense * 3) / (5 + d);
+        if (rel > 0.5 && pressure < 1.35) continue; // won't raid friends unless desperate
+        const targetState = this.settlementResourceState(t);
+        const resourceValue = needs.foodNeed * targetState.foodSurplus * 3.0 +
+          needs.woodNeed * targetState.woodSurplus * 0.8 +
+          needs.stoneNeed * targetState.stoneSurplus * 0.7 +
+          needs.metalNeed * targetState.metalSurplus * 1.1 +
+          targetState.luxurySurplus * (0.3 + s.culture.commercial * 0.4) +
+          t.foodStore / Math.max(1, t.members) * (s.famineT > 8 ? 0.16 : 0.05);
+        const grievance = 1 - rel + s.culture.expansionist * 0.4 + s.culture.militaristic * 0.35;
+        const score = resourceValue * grievance / (1 + t.defense * 3) / (5 + d);
         if (score > bestScore) { bestScore = score; target = t; }
       }
       if (!target) continue;
@@ -396,9 +612,16 @@ export class Simulation {
       this.raidCasualties(target, win ? 0.12 : 0.05);
       if (win) {
         const loot = target.foodStore * 0.4, gold = target.wealth * 0.35;
+        const wood = target.woodStore * 0.25, stone = target.stoneStore * 0.22;
+        const metal = (target.metalStore || 0) * 0.28, luxury = (target.luxuryStore || 0) * 0.22;
         target.foodStore -= loot; s.foodStore += loot;
+        target.woodStore -= wood; s.woodStore += wood;
+        target.stoneStore -= stone; s.stoneStore += stone;
+        target.metalStore -= metal; s.metalStore += metal;
+        target.luxuryStore -= luxury; s.luxuryStore += luxury;
         target.wealth -= gold; s.wealth += gold;
         target.stability -= 0.15;
+        s.lastDesperation = this.tick;
         cultureShift(s, 'militaristic', 0.05);
         cultureShift(target, 'militaristic', 0.06); // victims militarise too
       } else {
@@ -658,9 +881,79 @@ export class Simulation {
   }
 }
 
+function reconstructPath(world, came, start, goal, A, B) {
+  const path = [{ x: B.x, y: B.y }];
+  let cur = goal;
+  while (cur !== start) {
+    cur = came[cur];
+    if (cur < 0) return null;
+    path.push({ x: cur % world.w + 0.5, y: ((cur / world.w) | 0) + 0.5 });
+  }
+  path[path.length - 1] = { x: A.x, y: A.y };
+  path.reverse();
+  return path;
+}
+
+function simplifyPath(path) {
+  if (!path || path.length <= 4) return path;
+  const out = [path[0]];
+  for (let i = 2; i < path.length - 1; i += 3) out.push(path[i]);
+  out.push(path[path.length - 1]);
+  return out;
+}
+
+function heapPush(heap, item) {
+  heap.push(item);
+  let i = heap.length - 1;
+  while (i > 0) {
+    const p = (i - 1) >> 1;
+    if (heap[p][0] <= item[0]) break;
+    heap[i] = heap[p];
+    i = p;
+  }
+  heap[i] = item;
+}
+
+function heapPop(heap) {
+  const top = heap[0];
+  const last = heap.pop();
+  if (heap.length && last) {
+    let i = 0;
+    while (true) {
+      let c = i * 2 + 1;
+      if (c >= heap.length) break;
+      if (c + 1 < heap.length && heap[c + 1][0] < heap[c][0]) c++;
+      if (heap[c][0] >= last[0]) break;
+      heap[i] = heap[c];
+      i = c;
+    }
+    heap[i] = last;
+  }
+  return top;
+}
+
 function downfallInfo(value = 'collapse') {
   const key = normalizeDownfallKey(value);
   return { key, ...(DOWNFALLS[key] || DOWNFALLS.collapse) };
+}
+
+function ruinSummary(s, info) {
+  const pop = s.members || 0;
+  const food = s.foodStore | 0;
+  const stability = (s.stability * 100) | 0;
+  const displaced = s.lastDisplaced
+    ? `${s.lastDisplaced.refugees} fled, ${s.lastDisplaced.casualties} died in the collapse.`
+    : 'No organized survivor record remained.';
+  if (info.key === 'abandoned') return `${s.name} was abandoned after its population fell away. Final stores: ${food} food, stability ${stability}%.`;
+  if (info.key === 'famine') return `${s.name} starved under severe food stress. Final population ${pop}, food stores ${food}, stability ${stability}%. ${displaced}`;
+  if (info.key === 'war') return `${s.name} broke after raids and border violence. Final population ${pop}, defense ${(s.defense * 100) | 0}%. ${displaced}`;
+  if (info.key === 'disease' || info.key === 'plague') return `${s.name} fell during sickness. ${s.sickCount || 0} residents were sick near the end. ${displaced}`;
+  if (info.key === 'drought' || info.key === 'flood' || info.key === 'earthquake' || info.key === 'wildfire') {
+    return `${s.name} collapsed after a ${info.label.toLowerCase()} shock destabilized the settlement. Final population ${pop}, stability ${stability}%. ${displaced}`;
+  }
+  if (info.key === 'migration') return `${s.name} emptied out after migration pressure made the region unsustainable. Final stability ${stability}%.`;
+  if (info.key === 'unrest') return `${s.name} collapsed from internal unrest and weak stability. Final population ${pop}, stability ${stability}%. ${displaced}`;
+  return `${s.name} collapsed. Final population ${pop}, food stores ${food}, stability ${stability}%. ${displaced}`;
 }
 
 function normalizeDownfallKey(value) {

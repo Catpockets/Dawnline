@@ -45,6 +45,20 @@ export default function Inspector({ data, onClose }) {
     );
   }
 
+  if (data.type === 'ruin') {
+    const r = data;
+    return h('div', { className: 'inspector' },
+      h('h4', null, `${r.icon} ${r.name} `, h('button', { onClick: onClose }, '✕')),
+      h('div', { className: 'sub' }, `Fell in Y${r.year} · ${r.cause}`),
+      h(KV, { k: 'Downfall', v: r.cause }),
+      h(KV, { k: 'Final population', v: r.finalMembers }),
+      h(KV, { k: 'Final stability', v: `${r.stability}%` }),
+      h(KV, { k: 'Food left', v: r.foodStore }),
+      h(KV, { k: 'Survivors', v: `${r.refugees} fled · ${r.casualties} died` }),
+      h('div', { className: 'mem', style: { marginTop: 8 } }, r.summary)
+    );
+  }
+
   const s = data;
   return h('div', { className: 'inspector' },
     h('h4', null, `⬢ ${s.name} `, h('button', { onClick: onClose }, '✕')),
@@ -53,6 +67,8 @@ export default function Inspector({ data, onClose }) {
     h(KV, { k: 'Stability', v: `${s.stability}%` }), h(Bar, { v: s.stability, color: s.stability > 50 ? 'var(--good)' : 'var(--bad)' }),
     h(KV, { k: 'Food store', v: s.foodStore }),
     h(KV, { k: 'Wood / Stone', v: `${s.woodStore} / ${s.stoneStore}` }),
+    h(KV, { k: 'Metal / Luxuries', v: `${s.metalStore} / ${s.luxuryStore}` }),
+    h(KV, { k: 'Local resources', v: s.resources }),
     h(KV, { k: 'Wealth', v: s.wealth }),
     h(KV, { k: 'Technology', v: s.tech }), h(Bar, { v: Math.min(100, s.techPct), color: '#c084fc' }),
     h(KV, { k: 'Defense', v: `${s.defense}%` }),

@@ -31,6 +31,8 @@ export function generateWorld(w, h, seed, abundance = 1) {
     wood: new Float32Array(n),
     stone: new Float32Array(n),
     metal: new Float32Array(n),
+    gems: new Float32Array(n),
+    river: new Float32Array(n),
     water: new Float32Array(n),     // drinkable-water access 0..100
     fertility: new Float32Array(n), // 0..1, drives regen + farming
     temp: new Float32Array(n),      // 0..1 (cold..hot)
@@ -68,23 +70,29 @@ export function generateWorld(w, h, seed, abundance = 1) {
       world.terrain[i] = t;
 
       // Base resources per terrain (scaled by abundance slider).
-      let food = 0, wood = 0, stone = 0, metal = 0;
+      let food = 0, wood = 0, stone = 0, metal = 0, gems = 0;
       switch (t) {
         case TERRAIN.WATER: food = 26; break; // coastal fishing, gathered from shore
         case TERRAIN.PLAINS: food = 38; wood = 6; stone = 6; break;
         case TERRAIN.FOREST: food = 55; wood = 60; break;
-        case TERRAIN.DESERT: food = 6; stone = 10; metal = 6; break;
-        case TERRAIN.MOUNTAIN: food = 4; stone = 55; metal = 30; break;
+        case TERRAIN.DESERT: food = 4; stone = 10; metal = 6; break;
+        case TERRAIN.MOUNTAIN: food = 0; stone = 70; metal = 45; break;
         case TERRAIN.FERTILE: food = 80; wood = 12; stone = 4; break;
       }
       const jitter = 0.75 + rand() * 0.5;
+      if (t === TERRAIN.MOUNTAIN && elev > 0.84 && rand() < 0.22) gems = 18 + rand() * 34;
+      else if (t === TERRAIN.DESERT && rand() < 0.035) gems = 8 + rand() * 18;
       world.maxFood[i] = food * abundance * jitter;
       world.food[i] = world.maxFood[i];
       world.wood[i] = wood * abundance * jitter;
       world.stone[i] = stone * abundance * jitter;
       world.metal[i] = metal * abundance * jitter;
+      world.gems[i] = gems * abundance;
 
-      const fert = t === TERRAIN.WATER ? 0 : clamp(moist * 0.7 + temp * 0.5 - Math.abs(temp - 0.55) * 0.6, 0, 1);
+      let fert = (t === TERRAIN.WATER || t === TERRAIN.MOUNTAIN)
+        ? 0
+        : clamp(moist * 0.7 + temp * 0.5 - Math.abs(temp - 0.55) * 0.6, 0, 1);
+      if (t === TERRAIN.DESERT) fert *= 0.35;
       world.fertility[i] = fert;
       // Warm + wet = higher endemic disease risk (swamps, standing water).
       world.disease[i] = clamp(moist * temp * 1.2 - 0.15, 0, 1) * (t === TERRAIN.WATER ? 0.3 : 1);
@@ -92,21 +100,90 @@ export function generateWorld(w, h, seed, abundance = 1) {
         t === TERRAIN.MOUNTAIN ? 0.55 + rand() * 0.3 :
         t === TERRAIN.DESERT ? 0.45 + rand() * 0.3 :
         t === TERRAIN.FOREST ? 0.25 + rand() * 0.25 : 0.08 + rand() * 0.15;
-      world.capacity[i] = (world.maxFood[i] / 8) * (0.5 + fert);
+      world.capacity[i] = (t === TERRAIN.WATER || t === TERRAIN.MOUNTAIN)
+        ? 0
+        : (world.maxFood[i] / 8) * (0.5 + fert);
     }
   }
 
+  generateRivers(world, seed);
   computeWaterAccess(world);
   return world;
 }
 
+function generateRivers(world, seed) {
+  const { w, h, terrain, elevation, river } = world;
+  const rand = mulberry32(seed ^ 0x51f15e);
+  const candidates = [];
+  for (let y = 2; y < h - 2; y++) {
+    for (let x = 2; x < w - 2; x++) {
+      const i = y * w + x;
+      if (terrain[i] === TERRAIN.MOUNTAIN && elevation[i] > 0.79 && rand() < 0.35) candidates.push(i);
+    }
+  }
+  const count = Math.min(candidates.length, Math.max(3, Math.round(Math.max(w, h) / 18)));
+  for (let n = 0; n < count; n++) {
+    const start = candidates.splice((rand() * candidates.length) | 0, 1)[0];
+    if (start === undefined) break;
+    carveRiver(world, start, rand);
+  }
+
+  for (let i = 0; i < river.length; i++) {
+    if (river[i] <= 0) continue;
+    const x = i % w, y = (i / w) | 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        const j = ny * w + nx;
+        if (terrain[j] === TERRAIN.WATER || terrain[j] === TERRAIN.MOUNTAIN) continue;
+        const k = dx === 0 && dy === 0 ? 1 : 0.45;
+        world.fertility[j] = clamp(world.fertility[j] + 0.22 * k, 0, 1);
+        world.maxFood[j] += 12 * k * world.abundance;
+        world.food[j] = Math.max(world.food[j], world.maxFood[j] * 0.85);
+        world.capacity[j] = Math.max(world.capacity[j], (world.maxFood[j] / 8) * (0.5 + world.fertility[j]));
+      }
+    }
+  }
+}
+
+function carveRiver(world, start, rand) {
+  const { w, h, terrain, elevation, river } = world;
+  let x = start % w, y = (start / w) | 0;
+  const seen = new Set();
+  for (let step = 0; step < w + h; step++) {
+    const i = y * w + x;
+    river[i] = Math.max(river[i], 1);
+    if (terrain[i] === TERRAIN.WATER && step > 3) break;
+    seen.add(i);
+
+    let best = -1, bestScore = Infinity;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 1 || ny < 1 || nx >= w - 1 || ny >= h - 1) continue;
+        const j = ny * w + nx;
+        if (seen.has(j)) continue;
+        const edge = Math.min(nx, ny, w - 1 - nx, h - 1 - ny) / Math.max(w, h);
+        const downhill = Math.max(0, elevation[j] - elevation[i]) * 2.5;
+        const waterBonus = terrain[j] === TERRAIN.WATER ? -3 : 0;
+        const score = elevation[j] + downhill + edge * 0.55 + rand() * 0.08 + waterBonus;
+        if (score < bestScore) { bestScore = score; best = j; }
+      }
+    }
+    if (best < 0) break;
+    x = best % w; y = (best / w) | 0;
+  }
+}
+
 /** BFS from every water tile so land tiles know how close fresh water is. */
 function computeWaterAccess(world) {
-  const { w, h, terrain, water } = world;
+  const { w, h, terrain, river, water } = world;
   const dist = new Int16Array(w * h).fill(999);
   const queue = [];
   for (let i = 0; i < w * h; i++) {
-    if (terrain[i] === TERRAIN.WATER) { dist[i] = 0; queue.push(i); }
+    if (terrain[i] === TERRAIN.WATER || river[i] > 0) { dist[i] = 0; queue.push(i); }
   }
   let head = 0;
   while (head < queue.length) {
@@ -131,6 +208,20 @@ export function walkable(world, x, y) {
   if (x < 0 || y < 0 || x >= world.w || y >= world.h) return false;
   const t = world.terrain[(y | 0) * world.w + (x | 0)];
   return t !== TERRAIN.WATER && t !== TERRAIN.MOUNTAIN;
+}
+
+export function travelCost(world, x, y) {
+  if (x < 0 || y < 0 || x >= world.w || y >= world.h) return Infinity;
+  const i = (y | 0) * world.w + (x | 0);
+  const t = world.terrain[i];
+  if (t === TERRAIN.WATER || t === TERRAIN.MOUNTAIN) return Infinity;
+  let cost = 1;
+  if (t === TERRAIN.FOREST) cost += 0.35;
+  else if (t === TERRAIN.DESERT) cost += 0.8;
+  if (world.elevation[i] > 0.68) cost += (world.elevation[i] - 0.68) * 4;
+  if (world.river[i] > 0) cost -= 0.25;
+  cost += world.danger[i] * 0.5;
+  return Math.max(0.45, cost);
 }
 
 export const tileIndex = (world, x, y) => (y | 0) * world.w + (x | 0);

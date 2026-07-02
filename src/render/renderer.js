@@ -154,6 +154,21 @@ export class Renderer {
       }
     }
     tctx.putImageData(img, 0, 0);
+
+    if (w.river) {
+      tctx.save();
+      for (let y = 0; y < w.h; y++) {
+        for (let x = 0; x < w.w; x++) {
+          const i = y * w.w + x;
+          if (w.river[i] <= 0) continue;
+          tctx.fillStyle = 'rgba(70, 180, 220, 0.62)';
+          tctx.fillRect(x * S - S * 0.1, y * S - S * 0.1, S * 1.2, S * 1.2);
+          tctx.fillStyle = 'rgba(170, 235, 245, 0.45)';
+          tctx.fillRect(x * S + S * 0.25, y * S + S * 0.25, S * 0.5, S * 0.5);
+        }
+      }
+      tctx.restore();
+    }
   }
 
   // ---- data overlays as translucent heat maps -----------------------------
@@ -276,11 +291,16 @@ export class Renderer {
         ctx.lineWidth = (0.1 + r.strength * 0.22);
         ctx.setLineDash([0.8, 0.6]);
         ctx.lineDashOffset = -(sim.tick % 1000) * 0.05;
-        const mx = (A.x + B.x) / 2 + (A.y - B.y) * 0.12; // slight arc
-        const my = (A.y + B.y) / 2 + (B.x - A.x) * 0.12;
         ctx.beginPath();
-        ctx.moveTo(A.x, A.y);
-        ctx.quadraticCurveTo(mx, my, B.x, B.y);
+        if (r.path && r.path.length > 1) {
+          ctx.moveTo(r.path[0].x, r.path[0].y);
+          for (let i = 1; i < r.path.length; i++) ctx.lineTo(r.path[i].x, r.path[i].y);
+        } else {
+          const mx = (A.x + B.x) / 2 + (A.y - B.y) * 0.12;
+          const my = (A.y + B.y) / 2 + (B.x - A.x) * 0.12;
+          ctx.moveTo(A.x, A.y);
+          ctx.quadraticCurveTo(mx, my, B.x, B.y);
+        }
         ctx.stroke();
       }
       ctx.setLineDash([]);
@@ -326,13 +346,13 @@ export class Renderer {
       ctx.lineCap = 'round';
       for (const r of sim.ruins) {
         ctx.strokeStyle = r.color || 'rgba(226, 232, 240, 0.75)';
-        ctx.lineWidth = 0.11;
-        ctx.beginPath(); ctx.arc(r.x, r.y, 0.7, 0, 6.283); ctx.stroke();
+        ctx.lineWidth = 0.14;
+        ctx.beginPath(); ctx.arc(r.x, r.y, 1.0, 0, 6.283); ctx.stroke();
         ctx.beginPath();
-        ctx.moveTo(r.x - 0.45, r.y - 0.45);
-        ctx.lineTo(r.x + 0.45, r.y + 0.45);
-        ctx.moveTo(r.x + 0.45, r.y - 0.45);
-        ctx.lineTo(r.x - 0.45, r.y + 0.45);
+        ctx.moveTo(r.x - 0.62, r.y - 0.62);
+        ctx.lineTo(r.x + 0.62, r.y + 0.62);
+        ctx.moveTo(r.x + 0.62, r.y - 0.62);
+        ctx.lineTo(r.x - 0.62, r.y + 0.62);
         ctx.stroke();
         if (v.scale > 3.5) ruinLabels.push(r);
       }
@@ -385,9 +405,12 @@ export class Renderer {
       if (this.selected.type === 'agent') {
         const a = sim.agentById.get(this.selected.id);
         if (a) { sx = a.x; sy = a.y; sr = 0.8; }
-      } else {
+      } else if (this.selected.type === 'settlement') {
         const s = sim.settlementById.get(this.selected.id);
         if (s) { sx = s.x; sy = s.y; sr = 1 + Math.sqrt(s.members) * 0.25; }
+      } else if (this.selected.type === 'ruin') {
+        const r = sim.ruins?.find((ruin) => ruin.id === this.selected.id);
+        if (r) { sx = r.x; sy = r.y; sr = 1.3; }
       }
       if (sx !== undefined) {
         const pulse = 0.15 + Math.sin(performance.now() / 220) * 0.08;
@@ -406,21 +429,21 @@ export class Renderer {
       for (const label of ruinLabels) {
         const [sx, sy] = this.worldToScreen(label.x, label.y);
         const color = label.color || '#f87171';
-        ctx.font = '700 16px "Segoe UI Symbol", "Segoe UI Emoji", sans-serif';
+        ctx.font = '700 24px "Segoe UI Symbol", "Segoe UI Emoji", sans-serif';
         ctx.textBaseline = 'middle';
-        ctx.lineWidth = 4;
+        ctx.lineWidth = 5;
         ctx.strokeStyle = 'rgba(5, 8, 15, 0.82)';
-        ctx.strokeText(label.icon || '☠', sx, sy - 4);
+        ctx.strokeText(label.icon || '☠', sx, sy - 7);
         ctx.fillStyle = color;
-        ctx.fillText(label.icon || '☠', sx, sy - 4);
+        ctx.fillText(label.icon || '☠', sx, sy - 7);
         if (v.scale > 5.5) {
-          ctx.font = '700 11px "Segoe UI", sans-serif';
+          ctx.font = '700 12px "Segoe UI", sans-serif';
           ctx.textBaseline = 'top';
           ctx.lineWidth = 3;
           ctx.strokeStyle = 'rgba(5, 8, 15, 0.88)';
-          ctx.strokeText(label.cause || 'Collapse', sx, sy + 6);
+          ctx.strokeText(label.cause || 'Collapse', sx, sy + 9);
           ctx.fillStyle = 'rgba(246, 249, 255, 0.96)';
-          ctx.fillText(label.cause || 'Collapse', sx, sy + 6);
+          ctx.fillText(label.cause || 'Collapse', sx, sy + 9);
         }
       }
       ctx.restore();
@@ -449,6 +472,15 @@ export class Renderer {
   pickAt(px, py) {
     const [wx, wy] = this.screenToWorld(px, py);
     const sim = this.sim;
+    let bestR = null, bestRPx = 24;
+    if (sim.ruins) {
+      for (const r of sim.ruins) {
+        const [rx, ry] = this.worldToScreen(r.x, r.y);
+        const d = Math.hypot(rx - px, ry - py);
+        if (d < bestRPx) { bestRPx = d; bestR = r; }
+      }
+    }
+    if (bestR) return { type: 'ruin', id: bestR.id };
     let bestA = null, bestD = 1.6;
     for (const a of sim.agents) {
       if (a.dead) continue;

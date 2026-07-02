@@ -29,7 +29,7 @@ export function createSettlement(sim, x, y, founderIds) {
     name: makeName(r),
     hue: (r() * 360) | 0,
     members: founderIds.length,
-    foodStore: 20, woodStore: 5, stoneStore: 0, wealth: 5,
+    foodStore: 20, woodStore: 5, stoneStore: 0, metalStore: 0, luxuryStore: 0, wealth: 5,
     buildings: { huts: 1, farms: 0, walls: 0, granary: 0, market: 0, temple: 0, workshop: 0 },
     defense: 0.1, tech: 0, stability: 0.7, leaderInfluence: 0.3 + r() * 0.4,
     culture: {},
@@ -41,6 +41,7 @@ export function createSettlement(sim, x, y, founderIds) {
     sickCount: 0,
     founded: sim.tick,
     lastRaid: -999, raidedT: 0, famineT: 0,
+    lastDesperation: -999,
     avgWealth: 0, dead: false
   };
   for (const t of CULTURE_TRAITS) s.culture[t] = 0.15 + r() * 0.3;
@@ -81,6 +82,8 @@ export function updateSettlement(sim, s) {
     sim.dissolveSettlement(s, 'abandoned');
     return;
   }
+
+  if (sim.tick % 9 === 0) sim.updateSettlementEconomy(s);
 
   // ---- technology: scales with population, innovation culture, workshops ----
   const techRate = 0.003 * Math.sqrt(s.members) *

@@ -281,6 +281,24 @@ function buildInspector(sim, sel) {
       friends, enemies, traits, skills, memory: a.memory.slice(-4)
     };
   }
+  if (sel.type === 'ruin') {
+    const r = sim.ruins?.find((ruin) => ruin.id === sel.id);
+    if (!r) return null;
+    return {
+      type: 'ruin',
+      id: r.id,
+      name: r.name,
+      icon: r.icon,
+      cause: r.cause,
+      year: r.year,
+      finalMembers: r.finalMembers,
+      stability: r.stability,
+      foodStore: r.foodStore,
+      refugees: r.refugees,
+      casualties: r.casualties,
+      summary: r.summary
+    };
+  }
   const s = sim.settlementById.get(sel.id);
   if (!s) return null;
   let allies = 0, enemies = 0;
@@ -296,6 +314,7 @@ function buildInspector(sim, sel) {
     members: s.members,
     stability: (s.stability * 100) | 0,
     foodStore: s.foodStore | 0, woodStore: s.woodStore | 0, stoneStore: s.stoneStore | 0,
+    metalStore: s.metalStore | 0, luxuryStore: s.luxuryStore | 0,
     wealth: s.wealth | 0,
     tech: s.tech.toFixed(2), techPct: (s.tech / 12) * 100,
     defense: (s.defense * 100) | 0,
@@ -303,6 +322,9 @@ function buildInspector(sim, sel) {
     sickCount: s.sickCount,
     buildings, tradePartners: s.tradePartners.size,
     allies, enemies, cultureTags,
+    resources: s.resourceProfile
+      ? `food ${s.resourceProfile.food | 0} · wood ${s.resourceProfile.wood | 0} · ore ${s.resourceProfile.metal | 0} · gems ${s.resourceProfile.gems | 0}`
+      : 'surveying',
     discoveries: s.discoveries.slice()
   };
 }
