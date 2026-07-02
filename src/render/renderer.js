@@ -319,6 +319,26 @@ export class Renderer {
       ctx.fill();
     }
 
+    // --- ruins: fallen settlements leave a small site marker ---
+    const ruinLabels = [];
+    if (sim.ruins && sim.ruins.length) {
+      ctx.save();
+      ctx.lineCap = 'round';
+      for (const r of sim.ruins) {
+        ctx.strokeStyle = r.color || 'rgba(226, 232, 240, 0.75)';
+        ctx.lineWidth = 0.11;
+        ctx.beginPath(); ctx.arc(r.x, r.y, 0.7, 0, 6.283); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(r.x - 0.45, r.y - 0.45);
+        ctx.lineTo(r.x + 0.45, r.y + 0.45);
+        ctx.moveTo(r.x + 0.45, r.y - 0.45);
+        ctx.lineTo(r.x - 0.45, r.y + 0.45);
+        ctx.stroke();
+        if (v.scale > 3.5) ruinLabels.push(r);
+      }
+      ctx.restore();
+    }
+
     // --- settlements: glow disc + ring ---
     const cityLabels = [];
     for (const s of sim.settlements) {
@@ -377,6 +397,34 @@ export class Renderer {
       }
     }
     ctx.restore();
+
+    if (ruinLabels.length) {
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.lineJoin = 'round';
+      ctx.miterLimit = 2;
+      for (const label of ruinLabels) {
+        const [sx, sy] = this.worldToScreen(label.x, label.y);
+        const color = label.color || '#f87171';
+        ctx.font = '700 16px "Segoe UI Symbol", "Segoe UI Emoji", sans-serif';
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = 'rgba(5, 8, 15, 0.82)';
+        ctx.strokeText(label.icon || '☠', sx, sy - 4);
+        ctx.fillStyle = color;
+        ctx.fillText(label.icon || '☠', sx, sy - 4);
+        if (v.scale > 5.5) {
+          ctx.font = '700 11px "Segoe UI", sans-serif';
+          ctx.textBaseline = 'top';
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = 'rgba(5, 8, 15, 0.88)';
+          ctx.strokeText(label.cause || 'Collapse', sx, sy + 6);
+          ctx.fillStyle = 'rgba(246, 249, 255, 0.96)';
+          ctx.fillText(label.cause || 'Collapse', sx, sy + 6);
+        }
+      }
+      ctx.restore();
+    }
 
     if (cityLabels.length) {
       ctx.save();

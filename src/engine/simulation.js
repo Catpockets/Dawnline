@@ -28,6 +28,22 @@ export const DEFAULT_PARAMS = {
 
 const HISTORY_CAP = 460;   // samples kept per series
 const SAMPLE_EVERY = 6;    // ticks between history samples
+const RUIN_CAP = 80;
+
+const DOWNFALLS = {
+  abandoned: { label: 'Abandoned', color: '#cbd5e1' },
+  famine: { label: 'Famine', color: '#facc15' },
+  disease: { label: 'Disease', color: '#a3e635' },
+  plague: { label: 'Plague', color: '#a3e635' },
+  war: { label: 'War', color: '#fb923c' },
+  drought: { label: 'Drought', color: '#fde047' },
+  flood: { label: 'Flood', color: '#38bdf8' },
+  earthquake: { label: 'Quake', color: '#e2e8f0' },
+  wildfire: { label: 'Wildfire', color: '#fb7185' },
+  migration: { label: 'Migration', color: '#fbbf24' },
+  unrest: { label: 'Unrest', color: '#f87171' },
+  collapse: { label: 'Collapse', color: '#e2e8f0' }
+};
 
 export class Simulation {
   constructor(params = {}) {
@@ -46,6 +62,7 @@ export class Simulation {
     this.nextSetId = 1;
     this.events = [];               // rolling event log for the UI
     this.flashes = [];              // transient visual markers (fights, disasters)
+    this.ruins = [];                // persistent markers for fallen settlements
     this.routes = new Map();        // "aId-bId" -> {a, b, strength}
     this.climate = { tempOffset: 0 };
     this.totals = { births: 0, deaths: 0, deathsWindow: 0 };
@@ -140,7 +157,8 @@ export class Simulation {
   }
 
   collapseSettlement(s) {
-    this.addEvent(`${s.name} has COLLAPSED — survivors scatter`, 'bad');
+    const downfall = this.getCollapseDownfall(s);
+    this.addEvent(`${s.name} has COLLAPSED — ${downfall.label.toLowerCase()}; survivors scatter`, 'bad');
     const w = this.world;
     for (const a of this.agents) {
       if (a.dead || a.home !== s.id) continue;
@@ -151,15 +169,17 @@ export class Simulation {
       else { a.state = 'migrating'; a.stateT = 0; a.hasTarget = false; }
     }
     w.danger[tileIndex(w, s.x, s.y)] = clamp(w.danger[tileIndex(w, s.x, s.y)] + 0.25, 0, 1);
-    this.removeSettlement(s);
+    this.removeSettlement(s, downfall.key);
   }
 
   dissolveSettlement(s, why) {
     this.addEvent(`${s.name} ${why}`, 'bad');
-    this.removeSettlement(s);
+    this.removeSettlement(s, why);
   }
 
-  removeSettlement(s) {
+  removeSettlement(s, downfall = 'collapse') {
+    if (s.dead) return;
+    this.recordRuin(s, downfall);
     s.dead = true;
     this.settlementById.delete(s.id);
     // drop routes touching it
@@ -168,6 +188,33 @@ export class Simulation {
       if (r.a === s.id || r.b === s.id) this.routes.delete(key);
     }
     for (const o of this.settlements) { o.relations.delete(s.id); o.tradePartners.delete(s.id); }
+  }
+
+  recordRuin(s, downfall) {
+    const info = downfallInfo(downfall);
+    this.ruins.push({
+      id: s.id,
+      name: s.name,
+      x: s.x,
+      y: s.y,
+      year: (this.tick / TICKS_PER_YEAR) | 0,
+      cause: info.label,
+      icon: '☠',
+      color: info.color
+    });
+    if (this.ruins.length > RUIN_CAP) this.ruins.shift();
+  }
+
+  getCollapseDownfall(s) {
+    if (s.lastDisaster && this.tick - s.lastDisaster.tick < 180) return downfallInfo(s.lastDisaster.kind);
+    if (s.famineT > 30 || s.foodStore < Math.max(1, s.members * 0.35)) return downfallInfo('famine');
+    if (s.sickCount > Math.max(2, s.members * 0.3)) return downfallInfo('disease');
+    if (this.tick - s.lastRaid < 160) return downfallInfo('war');
+    return downfallInfo('unrest');
+  }
+
+  markSettlementShock(s, kind) {
+    s.lastDisaster = { kind, tick: this.tick };
   }
 
   // =========================================================================
@@ -457,6 +504,7 @@ export class Simulation {
     // direct effects on people & settlements in range
     for (const s of this.settlements) {
       if (s.dead || dist2(s.x, s.y, x, y) > R * R) continue;
+      this.markSettlementShock(s, kind);
       if (kind === 'earthquake') {
         for (const k of Object.keys(s.buildings)) {
           s.buildings[k] = Math.max(0, s.buildings[k] - (this.rand() < 0.4 ? 1 : 0));
@@ -489,6 +537,7 @@ export class Simulation {
       w.food[i] *= 0.5;
       w.water[i] = Math.max(0, w.water[i] - 18);
     }
+    for (const s of this.settlements) if (!s.dead) this.markSettlementShock(s, 'drought');
     this.addEvent('⚠ CONTINENTAL DROUGHT — food and water crash', 'disaster');
   }
 
@@ -516,6 +565,9 @@ export class Simulation {
         w.food[i] *= 0.3; w.maxFood[i] *= 0.75;
         w.danger[i] = clamp(w.danger[i] + 0.2, 0, 1);
       }
+    }
+    for (const s of live) {
+      if (!s.dead && dist2(s.x, s.y, x, y) < 300) this.markSettlementShock(s, 'migration');
     }
     for (const a of this.agents) {
       if (!a.dead && dist2(a.x, a.y, x, y) < 300) {
@@ -604,4 +656,25 @@ export class Simulation {
     const n = sample.length;
     return clamp((n + 1 - 2 * (weighted / cum)) / n, 0, 1);
   }
+}
+
+function downfallInfo(value = 'collapse') {
+  const key = normalizeDownfallKey(value);
+  return { key, ...(DOWNFALLS[key] || DOWNFALLS.collapse) };
+}
+
+function normalizeDownfallKey(value) {
+  const key = String(value || 'collapse').toLowerCase();
+  if (key.includes('abandon')) return 'abandoned';
+  if (key.includes('plague')) return 'plague';
+  if (key.includes('disease') || key.includes('sick')) return 'disease';
+  if (key.includes('famine') || key.includes('starv')) return 'famine';
+  if (key.includes('raid') || key.includes('war')) return 'war';
+  if (key.includes('drought')) return 'drought';
+  if (key.includes('flood')) return 'flood';
+  if (key.includes('quake') || key.includes('earth')) return 'earthquake';
+  if (key.includes('fire')) return 'wildfire';
+  if (key.includes('migration')) return 'migration';
+  if (key.includes('unrest') || key.includes('stability')) return 'unrest';
+  return Object.prototype.hasOwnProperty.call(DOWNFALLS, key) ? key : 'collapse';
 }
