@@ -76,6 +76,7 @@ export function updateSettlement(sim, s) {
   const P = sim.params;
   const r = sim.rand;
   const ti = tileIndex(w, s.x, s.y);
+  if (s.stability > 0.32 && s.famineT < 10 && s.sickCount < Math.max(2, s.members * 0.1)) s.collapseCause = null;
 
   if (s.members <= 0) {
     // fully abandoned → mark dead, tile becomes slightly dangerous ruins
@@ -88,7 +89,7 @@ export function updateSettlement(sim, s) {
   // ---- technology: scales with population, innovation culture, workshops ----
   const techRate = 0.003 * Math.sqrt(s.members) *
     (0.5 + s.culture.innovative) * (1 + s.buildings.workshop * 0.3) * P.techSpeed;
-  s.tech += techRate;
+  s.tech = clamp(s.tech + techRate / (1 + s.tech * 0.18), 0, 14);
   for (const [lvl, name] of DISCOVERIES) {
     if (s.tech >= lvl && !s.discoveries.includes(name)) {
       s.discoveries.push(name);
@@ -100,26 +101,35 @@ export function updateSettlement(sim, s) {
     }
   }
 
+  sim.updateSettlementFoodSystem(s);
+
   // ---- food & famine bookkeeping ----
   const perCapita = s.foodStore / Math.max(1, s.members);
+  const farmResilience = clamp(s.tech * 0.045 + s.buildings.farms * 0.055 +
+    s.buildings.granary * 0.08 + s.tradePartners.size * 0.035, 0, 0.72);
   if (perCapita < 0.5) {
     s.famineT++;
-    s.stability -= 0.0025;
+    if (s.famineT > 8 && sim.tick % 15 === 0) sim.handleFoodCrisis(s);
+    s.stability -= 0.0025 * (1 - farmResilience);
     cultureShift(s, 'expansionist', 0.008); // hunger pushes outward
     if (s.famineT === 30) sim.addEvent(`Famine grips ${s.name}`, 'bad');
   } else {
-    s.famineT = Math.max(0, s.famineT - 2);
-    s.stability += 0.0035;
+    s.famineT = Math.max(0, s.famineT - (perCapita > 1.5 ? 4 : 2));
+    s.stability += 0.0035 + farmResilience * 0.0015;
   }
 
   // granaries slow food spoilage; without them surplus rots
-  const spoil = 0.004 * Math.max(0, s.foodStore - 40 * (1 + s.buildings.granary));
+  const storageTech = 1 + s.buildings.granary * 0.8 + (s.tech >= 4 ? 0.35 : 0) + (s.tech >= 8 ? 0.35 : 0);
+  const spoil = (0.004 / storageTech) * Math.max(0, s.foodStore - 40 * (1 + s.buildings.granary));
   s.foodStore = Math.max(0, s.foodStore - spoil);
 
   // ---- births: fertility * food surplus * pair bonds (agent-level input) ----
   const cap = 18 + s.buildings.huts * 9;
-  const birthP = 0.02 * s.members * clamp(perCapita / 1.2, 0.3, 1.5) *
-    (s.members < cap ? 1 : 0.15) * (1 - stabilityPenalty(s));
+  const infraCap = cap + s.buildings.farms * 35 + s.buildings.granary * 20 +
+    s.buildings.market * 18 + Math.min(s.tech, 12) * 7;
+  const capacityFactor = s.members < infraCap ? 1 : clamp(infraCap / Math.max(1, s.members), 0.04, 0.35);
+  const birthP = 0.012 * s.members * clamp(perCapita / 1.2, 0.25, 1.35) *
+    capacityFactor * (1 - stabilityPenalty(s));
   if (r() < birthP) {
     sim.spawnBaby(s.x + (r() - 0.5), s.y + (r() - 0.5), s.id);
     s.foodStore = Math.max(0, s.foodStore - 3);
@@ -146,10 +156,29 @@ export function updateSettlement(sim, s) {
     (s.tech >= 6 ? 0.15 : 0), 0, 0.95);
 
   // ---- stability clamps + collapse check ----
+  const thriving = clamp((perCapita - 1.4) * 0.002 + s.tradePartners.size * 0.0008 +
+    s.buildings.farms * 0.0009 + s.tech * 0.00025, 0, 0.008);
+  s.stability += thriving;
   s.stability += (0.62 - s.stability) * 0.0012; // slow drift toward a norm
   s.stability = clamp(s.stability, 0, 1);
-  const overcrowded = s.members > w.capacity[ti] * 6 + cap;
-  if (overcrowded) s.stability -= 0.003;
+  const overcrowded = s.members > w.capacity[ti] * 6 + infraCap;
+  if (overcrowded) { s.stability -= 0.003; s.collapseCause = 'overextension'; }
+  if (s.wealth > 90 && s.culture.authoritarian > 0.55 && s.leaderInfluence > 0.65) {
+    s.stability -= 0.0018;
+    s.collapseCause = 'inequality';
+  }
+  if (s.members > 45 && s.leaderInfluence < 0.16 && s.stability < 0.3) {
+    s.stability -= 0.0012;
+    s.collapseCause = 'governance';
+  }
+  if (s.tradePartners.size === 0 && s.famineT > 35 && s.tech >= 2) s.collapseCause = 'isolation';
+  if (s.famineT > 75 || (s.famineT > 45 && s.tech < 2)) {
+    if (s.tech >= 2 && s.tradePartners.size === 0) s.collapseCause = 'isolation';
+    else if (s.tech >= 2 || (s.resourceProfile && s.resourceProfile.food < 35)) s.collapseCause = 'resources';
+    else s.collapseCause = 'famine';
+  }
+  else if (s.famineT > 35 && s.tech >= 2 && s.tradePartners.size === 0) s.collapseCause = 'isolation';
+  else if (s.famineT > 25 && s.foodStore < s.members * 0.25) s.collapseCause = 'resources';
   if (s.stability < 0.12 && s.members > 0) {
     sim.collapseSettlement(s);
     return;
@@ -171,11 +200,16 @@ export function stabilityPenalty(s) {
 export function classifySettlement(s) {
   if (s.stability < 0.25 || s.famineT > 60) return 'collapsing settlement';
   if (s.buildings.huts <= 1 && s.tech < 2) return s.members < 12 ? 'hunter-gatherer camp' : 'nomadic tribe';
-  if (s.tech >= 8 && s.buildings.workshop >= 2) return 'technological center';
+  if (s.tech >= 10) return 'engineered city';
+  if (s.tech >= 8 && (s.buildings.workshop >= 1 || s.discoveries.includes('Medicine'))) return 'technological center';
+  if (s.tech >= 5 && s.members > 80) return 'city-state';
   if (s.buildings.walls >= 2 && s.culture.militaristic > 0.5) return 'fortress city';
   if (s.tradePartners.size >= 2 && s.buildings.market >= 1) return 'trade hub';
-  if (s.buildings.farms >= 2 || s.farmedTiles.size >= 4) return 'farming village';
-  return 'hunter-gatherer camp';
+  if (s.tech >= 3 && s.buildings.market >= 1) return 'market town';
+  if (s.tech >= 2 || s.buildings.farms > 0 || s.farmedTiles.size >= 2) {
+    return s.members > 45 ? 'agrarian town' : 'farming village';
+  }
+  return s.members > 18 ? 'settled village' : 'hunter-gatherer camp';
 }
 
 /**

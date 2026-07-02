@@ -35,7 +35,7 @@ export default function App() {
   const [stressMode, setStressMode] = useState(false);
   const [params, setParams] = useState({ ...DEFAULT_PARAMS });
   const [overlay, setOverlayState] = useState('none');
-  const [showRoutes, setShowRoutesState] = useState(true);
+  const [showRoutes, setShowRoutesState] = useState(false);
   const [showTrails, setShowTrailsState] = useState(true);
   const [, setSelection] = useState(null);
   const [ui, setUi] = useState({ stats: {}, events: [], history: emptyHistory(), fps: 0, tps: 0, inspector: null });

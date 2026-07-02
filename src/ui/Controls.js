@@ -89,7 +89,7 @@ export default function Controls({
         }, o))
       ),
       h('div', { style: { display: 'flex', gap: 6, marginTop: 8 } },
-        h('button', { className: 'tiny' + (showRoutes ? ' on' : ''), onClick: () => setShowRoutes(!showRoutes) }, 'Trade routes'),
+        h('button', { className: 'tiny' + (showRoutes ? ' on' : ''), onClick: () => setShowRoutes(!showRoutes) }, 'All trade routes'),
         h('button', { className: 'tiny' + (showTrails ? ' on' : ''), onClick: () => setShowTrails(!showTrails) }, 'Migration trails')
       )
     )

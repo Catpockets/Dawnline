@@ -33,6 +33,7 @@ export function generateWorld(w, h, seed, abundance = 1) {
     metal: new Float32Array(n),
     gems: new Float32Array(n),
     river: new Float32Array(n),
+    riverPaths: [],
     water: new Float32Array(n),     // drinkable-water access 0..100
     fertility: new Float32Array(n), // 0..1, drives regen + farming
     temp: new Float32Array(n),      // 0..1 (cold..hot)
@@ -125,7 +126,8 @@ function generateRivers(world, seed) {
   for (let n = 0; n < count; n++) {
     const start = candidates.splice((rand() * candidates.length) | 0, 1)[0];
     if (start === undefined) break;
-    carveRiver(world, start, rand);
+    const path = carveRiver(world, start, rand);
+    if (path.length > 3) world.riverPaths.push(path);
   }
 
   for (let i = 0; i < river.length; i++) {
@@ -138,8 +140,8 @@ function generateRivers(world, seed) {
         const j = ny * w + nx;
         if (terrain[j] === TERRAIN.WATER || terrain[j] === TERRAIN.MOUNTAIN) continue;
         const k = dx === 0 && dy === 0 ? 1 : 0.45;
-        world.fertility[j] = clamp(world.fertility[j] + 0.22 * k, 0, 1);
-        world.maxFood[j] += 12 * k * world.abundance;
+        world.fertility[j] = clamp(world.fertility[j] + 0.15 * k, 0, 1);
+        world.maxFood[j] += 7 * k * world.abundance;
         world.food[j] = Math.max(world.food[j], world.maxFood[j] * 0.85);
         world.capacity[j] = Math.max(world.capacity[j], (world.maxFood[j] / 8) * (0.5 + world.fertility[j]));
       }
@@ -151,8 +153,10 @@ function carveRiver(world, start, rand) {
   const { w, h, terrain, elevation, river } = world;
   let x = start % w, y = (start / w) | 0;
   const seen = new Set();
+  const path = [];
   for (let step = 0; step < w + h; step++) {
     const i = y * w + x;
+    path.push({ x: x + 0.5, y: y + 0.5 });
     river[i] = Math.max(river[i], 1);
     if (terrain[i] === TERRAIN.WATER && step > 3) break;
     seen.add(i);
@@ -175,6 +179,7 @@ function carveRiver(world, start, rand) {
     if (best < 0) break;
     x = best % w; y = (best / w) | 0;
   }
+  return path;
 }
 
 /** BFS from every water tile so land tiles know how close fresh water is. */

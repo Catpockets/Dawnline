@@ -41,6 +41,11 @@ const DOWNFALLS = {
   earthquake: { label: 'Quake', color: '#e2e8f0' },
   wildfire: { label: 'Wildfire', color: '#fb7185' },
   migration: { label: 'Migration', color: '#fbbf24' },
+  overextension: { label: 'Overextension', color: '#f59e0b' },
+  inequality: { label: 'Inequality', color: '#c084fc' },
+  isolation: { label: 'Isolation', color: '#94a3b8' },
+  resources: { label: 'Resource depletion', color: '#a8a29e' },
+  governance: { label: 'Governance crisis', color: '#f472b6' },
   unrest: { label: 'Unrest', color: '#f87171' },
   collapse: { label: 'Collapse', color: '#e2e8f0' }
 };
@@ -64,6 +69,8 @@ export class Simulation {
     this.flashes = [];              // transient visual markers (fights, disasters)
     this.ruins = [];                // persistent markers for fallen settlements
     this.routes = new Map();        // "aId-bId" -> {a, b, strength}
+    this.tradeMap = new Float32Array(this.world.w * this.world.h);
+    this.migrationMap = new Float32Array(this.world.w * this.world.h);
     this.climate = { tempOffset: 0 };
     this.totals = { births: 0, deaths: 0, deathsWindow: 0 };
     this.stats = {};
@@ -192,6 +199,7 @@ export class Simulation {
       const r = this.routes.get(key);
       if (r.a === s.id || r.b === s.id) this.routes.delete(key);
     }
+    this.rebuildTradeMap();
     for (const o of this.settlements) { o.relations.delete(s.id); o.tradePartners.delete(s.id); }
   }
 
@@ -218,7 +226,12 @@ export class Simulation {
 
   getCollapseDownfall(s) {
     if (s.lastDisaster && this.tick - s.lastDisaster.tick < 180) return downfallInfo(s.lastDisaster.kind);
-    if (s.famineT > 30 || s.foodStore < Math.max(1, s.members * 0.35)) return downfallInfo('famine');
+    if (s.collapseCause) return downfallInfo(s.collapseCause);
+    if (s.famineT > 30 || s.foodStore < Math.max(1, s.members * 0.35)) {
+      if (s.tech >= 2 && s.tradePartners.size === 0) return downfallInfo('isolation');
+      if (s.tech >= 2) return downfallInfo('resources');
+      return downfallInfo('famine');
+    }
     if (s.sickCount > Math.max(2, s.members * 0.3)) return downfallInfo('disease');
     if (this.tick - s.lastRaid < 160) return downfallInfo('war');
     return downfallInfo('unrest');
@@ -256,6 +269,7 @@ export class Simulation {
     if (this.tick % 30 === 5) this.updateWar();
     if (this.tick % 12 === 0) this.updateDisease();
     this.maybeDisaster();
+    if (this.tick % 10 === 0) this.fadeMigrationMap();
 
     // fade transient visuals
     for (let i = this.flashes.length - 1; i >= 0; i--) {
@@ -300,6 +314,71 @@ export class Simulation {
     }
   }
 
+  rebuildTradeMap() {
+    this.tradeMap.fill(0);
+    for (const route of this.routes.values()) {
+      if (!route.path || route.path.length < 2) continue;
+      const strength = 0.35 + route.strength;
+      for (let i = 1; i < route.path.length; i++) {
+        this.markTravelSegment(this.tradeMap, route.path[i - 1], route.path[i], strength);
+      }
+    }
+  }
+
+  markTravelSegment(map, a, b, amount) {
+    const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) * 2));
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const x = Math.round(a.x + (b.x - a.x) * t);
+      const y = Math.round(a.y + (b.y - a.y) * t);
+      if (x < 0 || y < 0 || x >= this.world.w || y >= this.world.h) continue;
+      const idx = y * this.world.w + x;
+      map[idx] = Math.min(8, map[idx] + amount);
+    }
+  }
+
+  recordMigrationTrail(x, y, amount = 1) {
+    const tx = x | 0, ty = y | 0;
+    if (tx < 0 || ty < 0 || tx >= this.world.w || ty >= this.world.h) return;
+    const idx = ty * this.world.w + tx;
+    this.migrationMap[idx] = Math.min(8, this.migrationMap[idx] + amount);
+  }
+
+  fadeMigrationMap() {
+    for (let i = 0; i < this.migrationMap.length; i++) {
+      const v = this.migrationMap[i] * 0.94;
+      this.migrationMap[i] = v < 0.03 ? 0 : v;
+    }
+  }
+
+  travelBoostAt(x, y, agent) {
+    const tx = x | 0, ty = y | 0;
+    if (tx < 0 || ty < 0 || tx >= this.world.w || ty >= this.world.h) return 1;
+    const idx = ty * this.world.w + tx;
+    const route = Math.min(1.2, this.tradeMap[idx] * 0.24);
+    const trail = Math.min(0.9, this.migrationMap[idx] * 0.08);
+    const learned = 0.28 + (agent.pathSense || 0.08);
+    return 1 + Math.min(0.48, (route + trail) * learned);
+  }
+
+  travelSteer(agent, tx, ty) {
+    const ax = agent.x | 0, ay = agent.y | 0;
+    let best = null, bestScore = 0.18;
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const x = ax + dx, y = ay + dy;
+        if (x < 0 || y < 0 || x >= this.world.w || y >= this.world.h) continue;
+        const idx = y * this.world.w + x;
+        const heat = this.tradeMap[idx] * 0.45 + this.migrationMap[idx] * 0.12;
+        if (heat <= 0) continue;
+        const toward = Math.hypot(agent.x - tx, agent.y - ty) - Math.hypot(x - tx, y - ty);
+        const score = heat + toward * 0.08 - Math.hypot(dx, dy) * 0.06;
+        if (score > bestScore) { bestScore = score; best = { x: x + 0.5, y: y + 0.5 }; }
+      }
+    }
+    return best;
+  }
+
   recountMembers() {
     for (const s of this.settlements) { s.members = 0; s.sickCount = 0; s.avgWealth = 0; }
     for (const a of this.agents) {
@@ -328,6 +407,90 @@ export class Simulation {
     }
     if (profile.water < 24) s.stability -= 0.0025;
     else if (profile.river > 0.08 || profile.water > 70) s.stability += 0.0015;
+  }
+
+  updateSettlementFoodSystem(s) {
+    const profile = s.resourceProfile || this.localResourceProfile(s, 7);
+    s.resourceProfile = profile;
+    const pop = Math.max(1, s.members);
+    const fertility = clamp(profile.food / 62, 0.15, 1.65);
+    const water = clamp(profile.water / 58, 0.25, 1.45);
+    const hasAgriculture = s.tech >= 2 || s.discoveries.includes('Agriculture');
+    const farmInfra = s.buildings.farms + Math.min(8, s.farmedTiles.size * 0.12);
+    const techBoost = hasAgriculture
+      ? 1 + s.tech * 0.055 + (s.tech >= 4 ? 0.18 : 0) + (s.tech >= 7 ? 0.22 : 0) + (s.tech >= 10 ? 0.28 : 0)
+      : 0.25;
+    const farmOutput = hasAgriculture
+      ? pop * 0.018 * techBoost * (1 + farmInfra * 0.45) * fertility * water
+      : pop * 0.006 * fertility * water;
+    const forageOutput = pop * 0.005 * fertility + clamp(profile.food / 80, 0, 1.4);
+    s.foodStore += farmOutput + forageOutput;
+
+    const desiredFarms = hasAgriculture ? clamp(Math.ceil(pop / 55), 1, 7) : 0;
+    if (desiredFarms > s.buildings.farms && s.woodStore >= 5 && s.stoneStore >= 1 &&
+        (s.famineT > 6 || pop > 35 || s.tech >= 4) && this.tick - (s.lastFarmExpansion || -999) > 80) {
+      s.woodStore -= 5;
+      s.stoneStore -= 1;
+      s.buildings.farms++;
+      s.lastFarmExpansion = this.tick;
+      this.addEvent(`${s.name} expanded farmland`, 'build');
+    }
+  }
+
+  handleFoodCrisis(s) {
+    if (this.tick - (s.lastFoodAppeal || -999) < 35) return false;
+    s.lastFoodAppeal = this.tick;
+    const pop = Math.max(1, s.members);
+    let donor = null, best = 0, route = null, key = null;
+    for (const r of this.routes.values()) {
+      if (r.a !== s.id && r.b !== s.id) continue;
+      const other = this.settlementById.get(r.a === s.id ? r.b : r.a);
+      if (!other || other.dead) continue;
+      const surplus = other.foodStore / Math.max(1, other.members) - 2.4;
+      const score = surplus * r.strength * (1 + this.cultureCompatibility(s, other));
+      if (score > best) { best = score; donor = other; route = r; }
+    }
+    if (!donor) {
+      for (const t of this.settlements) {
+        if (t.dead || t.id === s.id) continue;
+        const d = Math.sqrt(dist2(s.x, s.y, t.x, t.y));
+        if (d > 58) continue;
+        const surplus = t.foodStore / Math.max(1, t.members) - 2.5;
+        if (surplus <= 0) continue;
+        const rel = s.relations.get(t.id) || 0;
+        const score = surplus * (0.5 + this.cultureCompatibility(s, t)) * (1 + rel) / (1 + d * 0.03);
+        if (score > best) { best = score; donor = t; }
+      }
+      if (donor) {
+        key = s.id < donor.id ? `${s.id}-${donor.id}` : `${donor.id}-${s.id}`;
+        route = this.ensureTradeRoute(s, donor, key, this.routes.get(key));
+      }
+    }
+    if (donor && route) {
+      const flow = Math.min(donor.foodStore - donor.members * 1.8, pop * 0.35, 28);
+      if (flow > 2) {
+        donor.foodStore -= flow;
+        s.foodStore += flow;
+        const payment = Math.min(s.wealth, flow * 0.45);
+        s.wealth -= payment;
+        donor.wealth += payment;
+        s.stability += 0.025;
+        this.addEvent(`${s.name} secured emergency grain from ${donor.name}`, 'good');
+        return true;
+      }
+    }
+
+    const bravery = s.culture.militaristic * 0.55 + s.culture.expansionist * 0.35 +
+      clamp(s.tech / 10, 0, 0.45) + s.defense * 0.25 - s.culture.peaceful * 0.35;
+    if (donor && this.tick - s.lastRaid > 80 && bravery > 0.55 && this.rand() < bravery * 0.22) {
+      const rel = clamp((s.relations.get(donor.id) || 0) - 0.45, -1, 1);
+      s.relations.set(donor.id, rel);
+      donor.relations.set(s.id, rel);
+      s.lastDesperation = this.tick;
+      cultureShift(s, 'militaristic', 0.035);
+      this.addEvent(`${s.name} prepares to seize food from ${donor.name}`, 'war');
+    }
+    return false;
   }
 
   localResourceProfile(s, radius) {
@@ -467,6 +630,7 @@ export class Simulation {
         }
       }
     }
+    this.rebuildTradeMap();
   }
 
   ensureTradeRoute(A, B, key, route) {
@@ -952,6 +1116,11 @@ function ruinSummary(s, info) {
     return `${s.name} collapsed after a ${info.label.toLowerCase()} shock destabilized the settlement. Final population ${pop}, stability ${stability}%. ${displaced}`;
   }
   if (info.key === 'migration') return `${s.name} emptied out after migration pressure made the region unsustainable. Final stability ${stability}%.`;
+  if (info.key === 'overextension') return `${s.name} outgrew its local land and infrastructure. Final population ${pop}, stability ${stability}%. ${displaced}`;
+  if (info.key === 'inequality') return `${s.name} fractured as wealth and authority concentrated. Final wealth ${s.wealth | 0}, stability ${stability}%. ${displaced}`;
+  if (info.key === 'isolation') return `${s.name} lacked trade partners when its local food system failed. Final population ${pop}, food stores ${food}. ${displaced}`;
+  if (info.key === 'resources') return `${s.name} exhausted critical local resources and could not replace them in time. Final population ${pop}, stability ${stability}%. ${displaced}`;
+  if (info.key === 'governance') return `${s.name} fell into a governance crisis as leadership lost legitimacy. Final stability ${stability}%. ${displaced}`;
   if (info.key === 'unrest') return `${s.name} collapsed from internal unrest and weak stability. Final population ${pop}, stability ${stability}%. ${displaced}`;
   return `${s.name} collapsed. Final population ${pop}, food stores ${food}, stability ${stability}%. ${displaced}`;
 }
@@ -968,6 +1137,11 @@ function normalizeDownfallKey(value) {
   if (key.includes('quake') || key.includes('earth')) return 'earthquake';
   if (key.includes('fire')) return 'wildfire';
   if (key.includes('migration')) return 'migration';
+  if (key.includes('overextension') || key.includes('overcrowd')) return 'overextension';
+  if (key.includes('inequality') || key.includes('wealth')) return 'inequality';
+  if (key.includes('isolation')) return 'isolation';
+  if (key.includes('resource')) return 'resources';
+  if (key.includes('govern')) return 'governance';
   if (key.includes('unrest') || key.includes('stability')) return 'unrest';
   return Object.prototype.hasOwnProperty.call(DOWNFALLS, key) ? key : 'collapse';
 }

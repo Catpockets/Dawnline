@@ -40,6 +40,7 @@ export function createAgent(sim, x, y, opts = {}) {
     skills: {},
     // Reinforcement-like strategy weights: nudged up when a strategy pays off.
     strat: { gather: 1, farm: 1, trade: 1, raid: 1, explore: 1 },
+    pathSense: 0.06 + r() * 0.12,
     trail: [],               // recent positions for migration-trail rendering
     kills: 0, birthTick: sim.tick,
     dead: false
@@ -215,7 +216,21 @@ function move(sim, a, speed) {
   const dx = a.tx - a.x, dy = a.ty - a.y;
   const d = Math.hypot(dx, dy);
   if (d < 0.4) { a.hasTarget = false; return true; }
-  let nx = a.x + (dx / d) * speed, ny = a.y + (dy / d) * speed;
+  let ux = dx / d, uy = dy / d;
+  const steer = a.pathSense > 0.22 && sim.travelSteer ? sim.travelSteer(a, a.tx, a.ty) : null;
+  if (steer) {
+    const sx = steer.x - a.x, sy = steer.y - a.y;
+    const sd = Math.hypot(sx, sy) || 1;
+    const k = clamp((a.pathSense - 0.18) * 0.42, 0, 0.32);
+    ux = ux * (1 - k) + (sx / sd) * k;
+    uy = uy * (1 - k) + (sy / sd) * k;
+    const nd = Math.hypot(ux, uy) || 1;
+    ux /= nd; uy /= nd;
+  }
+  const boost = sim.travelBoostAt ? sim.travelBoostAt(a.x, a.y, a) : 1;
+  speed *= boost;
+  if (boost > 1.04) a.pathSense = clamp(a.pathSense + (boost - 1) * 0.012, 0.04, 1.25);
+  let nx = a.x + ux * speed, ny = a.y + uy * speed;
   if (!walkable(sim.world, nx, ny)) {
     // try sliding perpendicular either way
     const px = -dy / d, py = dx / d;
@@ -475,6 +490,7 @@ export function updateAgent(sim, a) {
   if (sim.tick % 4 === 0) {
     a.trail.push(a.x, a.y);
     if (a.trail.length > 16) a.trail.splice(0, 2);
+    if (a.state === 'migrating' && sim.recordMigrationTrail) sim.recordMigrationTrail(a.x, a.y, 1 + a.pathSense);
   }
 }
 

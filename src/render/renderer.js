@@ -23,7 +23,7 @@ export class Renderer {
     this.sim = null;
     this.view = { cx: 0, cy: 0, scale: 8 };
     this.overlay = 'none';
-    this.showRoutes = true;
+    this.showRoutes = false;
     this.showTrails = true;
     this.selected = null; // {type:'agent'|'settlement', id}
     this.terrainCanvas = document.createElement('canvas');
@@ -155,17 +155,21 @@ export class Renderer {
     }
     tctx.putImageData(img, 0, 0);
 
-    if (w.river) {
+    if (w.riverPaths && w.riverPaths.length) {
       tctx.save();
-      for (let y = 0; y < w.h; y++) {
-        for (let x = 0; x < w.w; x++) {
-          const i = y * w.w + x;
-          if (w.river[i] <= 0) continue;
-          tctx.fillStyle = 'rgba(70, 180, 220, 0.62)';
-          tctx.fillRect(x * S - S * 0.1, y * S - S * 0.1, S * 1.2, S * 1.2);
-          tctx.fillStyle = 'rgba(170, 235, 245, 0.45)';
-          tctx.fillRect(x * S + S * 0.25, y * S + S * 0.25, S * 0.5, S * 0.5);
-        }
+      tctx.lineCap = 'round';
+      tctx.lineJoin = 'round';
+      for (const river of w.riverPaths) {
+        if (river.length < 2) continue;
+        tctx.beginPath();
+        tctx.moveTo(river[0].x * S, river[0].y * S);
+        for (let i = 1; i < river.length; i++) tctx.lineTo(river[i].x * S, river[i].y * S);
+        tctx.strokeStyle = 'rgba(20, 115, 160, 0.62)';
+        tctx.lineWidth = Math.max(1, S * 0.42);
+        tctx.stroke();
+        tctx.strokeStyle = 'rgba(110, 220, 240, 0.72)';
+        tctx.lineWidth = Math.max(1, S * 0.18);
+        tctx.stroke();
       }
       tctx.restore();
     }
@@ -197,6 +201,8 @@ export class Renderer {
       const dm = new Float32Array(n);
       for (const a of sim.agents) if (!a.dead) dm[(a.y | 0) * w.w + (a.x | 0)] += 0.25;
       for (let i = 0; i < n; i++) heat(i, dm[i], [255, 180, 80]);
+    } else if (this.overlay === 'trade') {
+      for (let i = 0; i < n; i++) heat(i, sim.tradeMap[i] / 3.5, [95, 225, 245]);
     } else if (['influence', 'tech', 'wealth', 'culture'].includes(this.overlay)) {
       // settlement-field overlays: paint radial gradients per settlement
       for (const s of sim.settlements) {
@@ -281,14 +287,26 @@ export class Renderer {
       ctx.globalAlpha = 1;
     }
 
-    // --- trade routes: animated dashed arcs between settlements ---
-    if (this.showRoutes || this.overlay === 'trade') {
+    // --- trade routes: all routes when toggled, or focused routes for selected city ---
+    const selectedSettlementId = this.selected?.type === 'settlement' ? this.selected.id : null;
+    const highlightedSettlements = new Set();
+    const showAllRoutes = this.showRoutes;
+    if (selectedSettlementId !== null) highlightedSettlements.add(selectedSettlementId);
+    if (showAllRoutes || selectedSettlementId !== null) {
       ctx.lineCap = 'round';
       for (const r of sim.routes.values()) {
         const A = sim.settlementById.get(r.a), B = sim.settlementById.get(r.b);
         if (!A || !B) continue;
-        ctx.strokeStyle = `rgba(120, 230, 255, ${0.15 + r.strength * 0.5})`;
-        ctx.lineWidth = (0.1 + r.strength * 0.22);
+        const selectedRoute = selectedSettlementId !== null && (r.a === selectedSettlementId || r.b === selectedSettlementId);
+        if (!showAllRoutes && !selectedRoute) continue;
+        if (selectedRoute) {
+          highlightedSettlements.add(r.a);
+          highlightedSettlements.add(r.b);
+        }
+        ctx.strokeStyle = selectedRoute
+          ? `rgba(145, 245, 255, ${0.42 + r.strength * 0.48})`
+          : `rgba(120, 230, 255, ${0.10 + r.strength * 0.32})`;
+        ctx.lineWidth = selectedRoute ? (0.18 + r.strength * 0.28) : (0.08 + r.strength * 0.16);
         ctx.setLineDash([0.8, 0.6]);
         ctx.lineDashOffset = -(sim.tick % 1000) * 0.05;
         ctx.beginPath();
@@ -372,6 +390,13 @@ export class Renderer {
       ctx.strokeStyle = `hsla(${s.hue}, 85%, 70%, 0.95)`;
       ctx.lineWidth = 0.14;
       ctx.beginPath(); ctx.arc(s.x, s.y, R, 0, 6.283); ctx.stroke();
+      if (highlightedSettlements.has(s.id)) {
+        ctx.strokeStyle = s.id === selectedSettlementId
+          ? 'rgba(255, 255, 255, 0.95)'
+          : 'rgba(145, 245, 255, 0.9)';
+        ctx.lineWidth = s.id === selectedSettlementId ? 0.18 : 0.14;
+        ctx.beginPath(); ctx.arc(s.x, s.y, R + 0.45, 0, 6.283); ctx.stroke();
+      }
       // walls show as an extra square outline
       if (s.buildings.walls > 0) {
         ctx.strokeStyle = `hsla(${s.hue}, 40%, 85%, 0.8)`;
