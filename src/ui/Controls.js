@@ -32,8 +32,14 @@ function Slider({ label, value, min, max, step, onChange, fmt }) {
 export default function Controls({
   params, setParam, seed, setSeed, worldSize, setWorldSize,
   onRestart, overlay, setOverlay, showRoutes, setShowRoutes,
-  showTrails, setShowTrails, godAction, stressMode, setStressMode
+  showTrails, setShowTrails, godAction, armedGod, stressMode, setStressMode
 }) {
+  // targetable calamities arm a click-to-strike mode on the map
+  const god = (kind, icon, label, targetable = true) => h('button', {
+    className: 'danger' + (armedGod === kind ? ' on' : ''),
+    title: targetable ? 'Arms targeting — then click the map where it should strike' : undefined,
+    onClick: () => godAction(kind)
+  }, `${icon} ${label}${armedGod === kind ? ' ◎' : ''}`);
   return h('div', { className: 'sidebar' },
     h('div', { className: 'section' },
       h('h3', null, 'World Genesis ',
@@ -70,15 +76,18 @@ export default function Controls({
     h('div', { className: 'section' },
       h('h3', null, 'God Tools'),
       h('div', { className: 'btn-grid' },
-        h('button', { className: 'danger', onClick: () => godAction('drought') }, '🔥 Drought'),
-        h('button', { className: 'danger', onClick: () => godAction('plague') }, '☣ Plague'),
-        h('button', { className: 'danger', onClick: () => godAction('earthquake') }, '🌋 Earthquake'),
-        h('button', { className: 'danger', onClick: () => godAction('wildfire') }, '🌲 Wildfire'),
-        h('button', { className: 'danger', onClick: () => godAction('flood') }, '🌊 Flood'),
-        h('button', { className: 'danger', onClick: () => godAction('globalDrought') }, '☀ Global drought'),
-        h('button', { onClick: () => godAction('addResources') }, '✦ Add resources'),
-        h('button', { onClick: () => godAction('migration') }, '👣 Migration push')
-      )
+        god('drought', '☀', 'Drought'),
+        god('plague', '☣', 'Plague'),
+        god('earthquake', '🌋', 'Earthquake'),
+        god('wildfire', '🔥', 'Wildfire'),
+        god('flood', '🌊', 'Flood'),
+        god('migration', '👣', 'Migration push'),
+        h('button', { className: 'danger', onClick: () => godAction('globalDrought') }, '🌍 Global drought'),
+        h('button', { onClick: () => godAction('addResources') }, '✦ Add resources')
+      ),
+      h('div', { style: { fontSize: 10, color: 'var(--text-dim)', marginTop: 6 } },
+        armedGod ? 'Click the map to strike. Esc / right-click to cancel.'
+                 : 'Calamities arm a targeting cursor — you choose where they land.')
     ),
 
     h('div', { className: 'section' },

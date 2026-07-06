@@ -21,6 +21,7 @@ const read = (p) => readFileSync(join(root, p), 'utf8');
 // Modules concatenated in dependency order (imports/exports stripped).
 const MODULES = [
   'src/engine/rng.js',
+  'src/engine/names.js',
   'src/engine/world.js',
   'src/engine/agents.js',
   'src/engine/settlements.js',
@@ -30,6 +31,7 @@ const MODULES = [
   'src/ui/Controls.js',
   'src/ui/Analytics.js',
   'src/ui/Inspector.js',
+  'src/ui/Timeline.js',
   'src/App.js',
   'src/main.js'
 ];
@@ -78,7 +80,7 @@ const html = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <title>Dawnline</title>
 <style>
 ${read('src/styles.css')}

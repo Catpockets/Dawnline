@@ -93,7 +93,9 @@ export function updateSettlement(sim, s) {
   for (const [lvl, name] of DISCOVERIES) {
     if (s.tech >= lvl && !s.discoveries.includes(name)) {
       s.discoveries.push(name);
-      sim.addEvent(`${s.name} discovered ${name}`, 'tech');
+      const firstEver = !sim.globalDiscoveries.has(name);
+      if (firstEver) sim.globalDiscoveries.add(name);
+      sim.addEvent(`${s.name} discovered ${name}`, 'tech', firstEver ? '💡' : null);
       cultureShift(s, 'innovative', 0.04);
       if (name === 'Agriculture') cultureShift(s, 'communal', 0.05);
       if (name === 'Metallurgy') { s.defense += 0.15; cultureShift(s, 'militaristic', 0.03); }
@@ -128,12 +130,9 @@ export function updateSettlement(sim, s) {
   const infraCap = cap + s.buildings.farms * 35 + s.buildings.granary * 20 +
     s.buildings.market * 18 + Math.min(s.tech, 12) * 7;
   const capacityFactor = s.members < infraCap ? 1 : clamp(infraCap / Math.max(1, s.members), 0.04, 0.35);
-  const birthP = 0.012 * s.members * clamp(perCapita / 1.2, 0.25, 1.35) *
-    capacityFactor * (1 - stabilityPenalty(s));
-  if (r() < birthP) {
-    sim.spawnBaby(s.x + (r() - 0.5), s.y + (r() - 0.5), s.id);
-    s.foodStore = Math.max(0, s.foodStore - 3);
-  }
+  // births now emerge from agent-level marriage + pregnancy (agents.js);
+  // the settlement contributes a 'family climate' factor read at conception.
+  s.birthFactor = clamp(perCapita / 1.2, 0.25, 1.35) * capacityFactor * (1 - stabilityPenalty(s));
 
   // ---- culture drift: environment + events + slow random walk ----
   if (sim.tick % 20 === 0) {

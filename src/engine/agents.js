@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 import { clamp, dist2 } from './rng.js';
 import { TERRAIN, walkable, tileIndex, findBestTile } from './world.js';
+import { firstNameFor, surname } from './names.js';
 
 export const TICKS_PER_YEAR = 30;
 
@@ -15,8 +16,12 @@ let SKILL_NAMES = ['gather', 'farm', 'build', 'fight', 'trade', 'heal', 'explore
 /** Create one agent. Personality traits are stable; needs fluctuate. */
 export function createAgent(sim, x, y, opts = {}) {
   const r = sim.rand;
+  const sex = opts.sex || (r() < 0.5 ? 'M' : 'F');
   const a = {
     id: sim.nextAgentId++,
+    sex,
+    firstName: firstNameFor(r, sex),
+    lastName: opts.lastName || surname(r),
     x, y, tx: x, ty: y, hasTarget: false,
     px: x, py: y, // position at the start of the current tick (for render interpolation)
     age: opts.age !== undefined ? opts.age : 14 + r() * 22,
@@ -32,7 +37,12 @@ export function createAgent(sim, x, y, opts = {}) {
     sick: false, immunity: r() * 0.3, sickT: 0,
     inv: { food: 2 + r() * 4, wood: 0, stone: 0, wealth: r() * 2 },
     home: opts.home !== undefined ? opts.home : -1,
-    partner: -1,
+    spouse: -1,
+    mother: opts.mother !== undefined ? opts.mother : -1,
+    father: opts.father !== undefined ? opts.father : -1,
+    children: [], guardian: -1,
+    pregnant: false, pregT: 0,
+    lastHurt: null,
     rel: new Map(),          // id -> -1..1 trust/hostility
     memory: [],              // short ring of recent event strings
     state: 'idle', stateT: 0,
@@ -51,6 +61,15 @@ export function createAgent(sim, x, y, opts = {}) {
   for (const s of SKILL_NAMES) a.skills[s] /= total;
   const spec = SKILL_NAMES[(r() * SKILL_NAMES.length) | 0];
   a.skills[spec] += 0.25;
+  // mild sex-based stat shifts (population-level flavour, not hard gates)
+  if (sex === 'M') {
+    a.skills.fight = Math.min(1, a.skills.fight * 1.3);
+    a.aggression = clamp(a.aggression * 1.25, 0, 1);
+  } else {
+    a.empathy = clamp(a.empathy + 0.12, 0, 1);
+    a.sociability = clamp(a.sociability + 0.08, 0, 1);
+    a.skills.heal = Math.min(1, a.skills.heal * 1.25);
+  }
   return a;
 }
 
@@ -289,7 +308,21 @@ export function updateAgent(sim, a) {
 
   // ageing mortality (rises sharply past ~55 sim-years)
   if (a.age > 55 && sim.rand() < (a.age - 55) * 0.00012) a.health = -1;
-  if (a.health <= 0) { sim.killAgent(a, a.sick ? 'disease' : a.hunger >= 98 ? 'starvation' : 'death'); return; }
+  if (a.health <= 0) {
+    sim.killAgent(a, a.sick ? 'disease'
+      : a.hunger >= 98 ? 'starvation'
+      : a.thirst >= 98 ? 'dehydration'
+      : a.age > 55 ? 'old age'
+      : (a.lastHurt || 'hardship'));
+    return;
+  }
+
+  // ---- children: stay with family, no independent utility AI --------------
+  // (fixes toddlers wandering the wilderness alone)
+  if (a.age < 14) {
+    updateChild(sim, a, home);
+    return;
+  }
 
   // ---- re-decide periodically or when current state has run its course ----
   a.stateT++;
@@ -368,11 +401,13 @@ export function updateAgent(sim, a) {
           const warmth = 0.05 + a.empathy * 0.05;
           remember(a, 'shared stories', b, warmth);
           remember(b, 'shared stories', a, warmth);
-          // pair-bond if both unattached and friendly
-          if (a.partner < 0 && b.partner < 0 && (a.rel.get(b.id) || 0) > 0.35 &&
-              a.age > 15 && a.age < 50 && b.age > 15 && b.age < 50) {
-            a.partner = b.id; b.partner = a.id;
-            remember(a, 'found a partner', b, 0.3);
+          // marriage: opposite-sex singles who have grown to trust each other
+          if (a.spouse < 0 && b.spouse < 0 && a.sex !== b.sex &&
+              (a.rel.get(b.id) || 0) > 0.35 &&
+              a.age > 16 && a.age < 50 && b.age > 16 && b.age < 50) {
+            a.spouse = b.id; b.spouse = a.id;
+            remember(a, `married ${b.firstName}`, b, 0.4);
+            remember(b, `married ${a.firstName}`, a, 0.4);
           }
           break;
         }
@@ -443,6 +478,7 @@ export function updateAgent(sim, a) {
     a.fear = clamp(a.fear + 40, 0, 100);
     a.threatX = a.x + (sim.rand() - 0.5) * 2; a.threatY = a.y + (sim.rand() - 0.5) * 2;
     remember(a, 'attacked by predators');
+    a.lastHurt = 'wild animals';
   }
 
   // ---- group dynamics for the homeless: found or join settlements ----
@@ -473,11 +509,40 @@ export function updateAgent(sim, a) {
     setState(sim, a, 'migrating');
   }
 
-  // ---- nomad reproduction (settlement births are handled by settlements) ---
-  if (a.home < 0 && a.age > 16 && a.age < 45 && a.health > 55 && a.hunger < 55 &&
-      sim.rand() < 0.0025 * a.fertility * (a.partner >= 0 ? 1.7 : 0.7)) {
-    const baby = sim.spawnBaby(a.x, a.y, -1);
-    if (baby) { remember(a, 'a child was born'); a.inv.food = Math.max(0, a.inv.food - 2); }
+  // ---- courtship: single adults near each other may marry ----
+  if (a.spouse < 0 && a.age > 16 && a.age < 50 && (sim.tick + a.id) % 50 === 0 &&
+      a.sociability > 0.2) {
+    const ids = nearbyAgents(sim, a.x, a.y, 3);
+    for (const id of ids) {
+      if (id === a.id) continue;
+      const b = sim.agentById.get(id);
+      if (b && !b.dead && b.spouse < 0 && b.sex !== a.sex &&
+          b.age > 16 && b.age < 50 && sim.rand() < 0.5) {
+        a.spouse = b.id; b.spouse = a.id;
+        remember(a, `married ${b.firstName}`, b, 0.4);
+        remember(b, `married ${a.firstName}`, a, 0.4);
+        break;
+      }
+    }
+  }
+
+  // ---- conception: married women may become pregnant when life is stable --
+  if (a.sex === 'F' && !a.pregnant && a.spouse >= 0 && a.age > 16 && a.age < 45 &&
+      a.health > 55 && a.hunger < 60) {
+    const husband = sim.agentById.get(a.spouse);
+    if (husband && !husband.dead) {
+      // settlement provides a family climate (food security, housing, stability)
+      const factor = home ? (home.birthFactor !== undefined ? home.birthFactor : 0.5) : 0.45;
+      if (sim.rand() < 0.014 * a.fertility * factor) {
+        a.pregnant = true; a.pregT = 0;
+        remember(a, 'expecting a child');
+      }
+    }
+  }
+  // pregnancy progresses; birth after ~9 months (24 ticks)
+  if (a.pregnant) {
+    a.pregT++;
+    if (a.pregT >= 24) sim.giveBirth(a);
   }
 
   // ---- auto-deposit surplus when passing near home ----
@@ -494,13 +559,14 @@ export function updateAgent(sim, a) {
   }
 }
 
-/** Melee resolution between two agents. Winner may loot; both remember it. */
+/**  Melee resolution between two agents. Winner may loot; both remember it. */
 function resolveCombat(sim, a, b) {
   const pa = a.skills.fight * (0.5 + a.health / 150) * (1 + a.aggression);
   const pb = b.skills.fight * (0.5 + b.health / 150) * (1 + b.aggression);
   const dmgToB = 6 + pa * 14 * sim.rand();
   const dmgToA = 4 + pb * 12 * sim.rand();
   b.health -= dmgToB; a.health -= dmgToA;
+  a.lastHurt = 'battle wounds'; b.lastHurt = 'battle wounds';
   b.fear = clamp(b.fear + 35, 0, 100);
   b.threatX = a.x; b.threatY = a.y;
   remember(a, 'fought', b, -0.3);
@@ -510,9 +576,63 @@ function resolveCombat(sim, a, b) {
     a.kills++;
     a.inv.food += b.inv.food * 0.7; a.inv.wealth += b.inv.wealth * 0.7;
     reinforce(a, 'raid', 0.8);
-    sim.killAgent(b, 'violence');
+    sim.killAgent(b, 'violence', a);
   } else if (a.health < 30) {
     reinforce(a, 'raid', -0.6);
     a.fear = 80; setState(sim, a, 'fleeing');
+  }
+}
+
+// --------------------------------------------------------------------------
+// CHILDHOOD: children follow their mother (or father / adoptive guardian),
+// share the caretaker's food, and only strike out on their own at 14.
+// Orphans decay fast in the wild unless an empathetic adult adopts them.
+// --------------------------------------------------------------------------
+function updateChild(sim, a, home) {
+  a.state = 'child';
+  // find a living caretaker: mother first, then father, then guardian
+  let care = null;
+  for (const id of [a.mother, a.father, a.guardian]) {
+    if (id >= 0) {
+      const p = sim.agentById.get(id);
+      if (p && !p.dead) { care = p; break; }
+    }
+  }
+  if (care) {
+    // stay close; toddle after the caretaker
+    if (dist2(a.x, a.y, care.x, care.y) > 4) {
+      setTarget(a, care.x + (sim.rand() - 0.5), care.y + (sim.rand() - 0.5));
+    }
+    move(sim, a, 0.3);
+    // caretaker shares food
+    if (a.hunger > 45 && care.inv.food > 1) {
+      care.inv.food -= 1.5;
+      a.hunger = clamp(a.hunger - 18, 0, 100);
+    }
+  } else {
+    // ORPHAN: exposure, fear, and predators loom — grim odds alone
+    a.health -= 0.25;
+    a.fear = clamp(a.fear + 0.5, 0, 100);
+    a.lastHurt = 'exposure as an orphan';
+    if (home) { setTarget(a, home.x, home.y); move(sim, a, 0.24); }
+    // seek adoption: a nearby empathetic adult may take the child in
+    if ((sim.tick + a.id) % 25 === 0) {
+      const ids = nearbyAgents(sim, a.x, a.y, 4);
+      for (const id of ids) {
+        const p = sim.agentById.get(id);
+        if (p && !p.dead && p.age >= 16 && p.empathy > 0.45) {
+          a.guardian = p.id;
+          p.children.push(a.id);
+          remember(p, `adopted little ${a.firstName}`);
+          remember(a, `taken in by ${p.firstName}`, p, 0.6);
+          break;
+        }
+      }
+    }
+  }
+  // trail continuity for rendering
+  if (sim.tick % 4 === 0) {
+    a.trail.push(a.x, a.y);
+    if (a.trail.length > 16) a.trail.splice(0, 2);
   }
 }

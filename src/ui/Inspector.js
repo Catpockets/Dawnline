@@ -20,8 +20,9 @@ export default function Inspector({ data, onClose }) {
   if (data.type === 'agent') {
     const a = data;
     return h('div', { className: 'inspector' },
-      h('h4', null, `◉ Agent #${a.id} `, h('button', { onClick: onClose }, '✕')),
-      h('div', { className: 'sub' }, `${a.stateLabel} · age ${a.age} · ${a.homeName}`),
+      h('h4', null, `${a.sex === 'F' ? '♀' : '♂'} ${a.name} `, h('button', { onClick: onClose }, '✕')),
+      h('div', { className: 'sub' },
+        `${a.stateLabel}${a.pregnant ? ' · 🤰 expecting' : ''} · age ${a.age} · ${a.homeName}`),
       h(KV, { k: 'Health', v: a.health }), h(Bar, { v: a.health, color: a.health > 50 ? 'var(--good)' : 'var(--bad)' }),
       h(KV, { k: 'Hunger', v: a.hunger }), h(Bar, { v: a.hunger, color: a.hunger > 60 ? 'var(--bad)' : 'var(--warn)' }),
       h(KV, { k: 'Thirst', v: a.thirst }), h(Bar, { v: a.thirst, color: '#7dd3fc' }),
@@ -29,7 +30,9 @@ export default function Inspector({ data, onClose }) {
       h(KV, { k: 'Fear', v: a.fear }), h(Bar, { v: a.fear, color: '#fb7185' }),
       h(KV, { k: 'Sick', v: a.sick ? 'YES' : 'no' }),
       h(KV, { k: 'Inventory', v: `🍖${a.food} 🪵${a.wood} 💰${a.wealth}` }),
-      h(KV, { k: 'Partner', v: a.partner }),
+      h(KV, { k: 'Spouse', v: a.spouseName }),
+      h(KV, { k: 'Children', v: a.childrenLabel }),
+      h(KV, { k: 'Parents', v: a.parents }),
       h(KV, { k: 'Relationships', v: `${a.friends} friends · ${a.enemies} rivals` }),
       h('div', { style: { margin: '7px 0 3px' } },
         a.traits.map((t) => h('span', { key: t, className: 'tag' }, t))),
@@ -42,6 +45,18 @@ export default function Inspector({ data, onClose }) {
         h('div', { className: 'kv' }, h('span', { className: 'k' }, 'Recent memory')),
         a.memory.map((m, i) => h('div', { key: i, className: 'mem' }, `“${m}”`))
       ) : null
+    );
+  }
+
+  if (data.type === 'grave') {
+    const g = data;
+    return h('div', { className: 'inspector' },
+      h('h4', null, `🪦 ${g.name} `, h('button', { onClick: onClose }, '✕')),
+      h('div', { className: 'sub' }, `${g.sex === 'F' ? '♀' : '♂'} died Year ${g.year}, aged ${g.age}`),
+      h(KV, { k: 'Cause of death', v: g.cause }),
+      g.killer ? h(KV, { k: 'Slain by', v: g.killer }) : null,
+      h('div', { className: 'mem', style: { marginTop: 8 } },
+        g.killer ? `${g.name} was killed by ${g.killer}.` : `Here lies ${g.name}, taken by ${g.cause}.`)
     );
   }
 

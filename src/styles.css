@@ -201,3 +201,138 @@ select option { background: #0d1320; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: rgba(125, 211, 252, 0.18); border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- milestone timeline (birds on a wire) ---------- */
+.timeline {
+  position: absolute; left: 12px; right: 12px; bottom: 12px; height: 78px;
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: 12px; z-index: 18; overflow: hidden;
+  backdrop-filter: blur(6px);
+}
+.timeline .tl-title {
+  position: absolute; left: 10px; top: 5px; font-size: 9px;
+  letter-spacing: 0.14em; color: var(--accent2); font-weight: 600;
+}
+.timeline .wire {
+  position: absolute; left: 0; right: 0; bottom: 24px; height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(125,211,252,0.55) 6%, rgba(125,211,252,0.55) 94%, transparent);
+  box-shadow: 0 0 8px rgba(125, 211, 252, 0.35);
+}
+.timeline .yearmark {
+  position: absolute; bottom: 3px; transform: translateX(-50%);
+  color: var(--text-dim); font-size: 9px; text-align: center; pointer-events: none;
+}
+.timeline .yearmark .tickline { width: 1px; height: 7px; background: rgba(125,211,252,0.4); margin: 0 auto 1px; }
+.timeline .milestone {
+  position: absolute; bottom: 22px; transform: translateX(-50%);
+  background: none; border: none; font-size: 15px; padding: 1px 2px;
+  cursor: pointer; line-height: 1;
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,0.7));
+  transition: transform 0.1s;
+}
+.timeline .milestone:hover { transform: translateX(-50%) scale(1.4); z-index: 3; }
+.timeline .milestone.row1 { bottom: 40px; }
+.tl-now {
+  position: absolute; right: 10px; top: 5px;
+  font-family: var(--mono); font-size: 10px; color: var(--accent); font-weight: 600;
+}
+.tl-popup {
+  position: absolute; top: 3px; transform: translateX(-50%);
+  background: #0e1728; border: 1px solid rgba(94, 234, 212, 0.45);
+  color: var(--text); border-radius: 8px; padding: 4px 10px; font-size: 11px;
+  max-width: 380px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  z-index: 6; box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+.tl-popup b { color: var(--accent2); }
+
+/* ---------- god-tool targeting ---------- */
+.god-banner {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  background: rgba(140, 35, 50, 0.88); border: 1px solid rgba(255, 120, 120, 0.65);
+  color: #ffe4e4; padding: 6px 16px; border-radius: 20px; font-size: 12px;
+  font-weight: 600; z-index: 25; backdrop-filter: blur(4px);
+  box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+  pointer-events: none;
+}
+
+/* inspector sits above the timeline now */
+.inspector { bottom: 100px; }
+
+/* ------------------------------------------------------------------------
+   MOBILE / TABLET (≤1020px): sidebars become slide-in drawers over a
+   full-width map; touch targets grow; chrome compacts. Desktop unchanged.
+   ------------------------------------------------------------------------ */
+.mobile-only { display: none; }
+.drawer-backdrop { display: none; }
+
+@media (max-width: 1020px) {
+  html, body, #root { height: 100dvh; } /* survives mobile URL-bar collapse */
+
+  .mobile-only {
+    display: inline-block;
+    font-size: 16px; padding: 6px 12px;
+  }
+
+  /* top bar: single scrollable strip */
+  .topbar {
+    gap: 8px; padding: 6px 8px;
+    flex-wrap: nowrap; overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .topbar::-webkit-scrollbar { display: none; }
+  .topbar h1 { font-size: 12px; letter-spacing: 0.03em; }
+
+  /* sidebars → off-canvas drawers above the map */
+  .sidebar {
+    position: absolute; top: 0; bottom: 0; left: 0;
+    width: min(82vw, 320px); min-width: 0;
+    z-index: 40;
+    transform: translateX(-103%);
+    transition: transform 0.25s ease;
+    box-shadow: 10px 0 34px rgba(0, 0, 0, 0.55);
+  }
+  .sidebar.right {
+    left: auto; right: 0;
+    width: min(88vw, 336px); min-width: 0;
+    transform: translateX(103%);
+    box-shadow: -10px 0 34px rgba(0, 0, 0, 0.55);
+  }
+  .main.show-left .sidebar:not(.right) { transform: translateX(0); }
+  .main.show-right .sidebar.right { transform: translateX(0); }
+
+  .drawer-backdrop {
+    display: block; position: absolute; inset: 0; z-index: 35;
+    background: rgba(3, 6, 12, 0.55);
+    backdrop-filter: blur(2px);
+  }
+
+  /* map furniture: give the world room */
+  .legend { display: none; }
+  .inspector {
+    left: 8px; right: 8px; width: auto;
+    bottom: 84px; max-height: 42%;
+    z-index: 30;
+  }
+  .timeline { left: 8px; right: 8px; bottom: 8px; height: 62px; }
+  .timeline .tl-title { display: none; }
+  .timeline .milestone { font-size: 17px; }
+  .timeline .milestone.row1 { bottom: 34px; }
+  .god-banner { font-size: 11px; padding: 5px 12px; max-width: 92vw; text-align: center; }
+
+  /* finger-sized interactive elements */
+  button { padding: 8px 12px; font-size: 13px; }
+  button.tiny { padding: 6px 9px; font-size: 12px; }
+  .overlay-grid button { padding: 6px 10px; font-size: 11.5px; }
+  input[type="range"] { height: 6px; }
+  input[type="range"]::-webkit-slider-thumb { width: 21px; height: 21px; }
+  input[type="text"], select { padding: 8px 10px; font-size: 13px; }
+  .sidebar { padding: 14px 14px 40px; } /* extra bottom space past home bars */
+}
+
+@media (max-width: 700px) {
+  .topbar h1 { display: none; }   /* icons + chips only on phones */
+  .chip.hide-sm { display: none; }
+  .chip { font-size: 10px; padding: 3px 7px; }
+  .inspector { max-height: 38%; }
+}

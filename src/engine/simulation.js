@@ -68,6 +68,10 @@ export class Simulation {
     this.events = [];               // rolling event log for the UI
     this.flashes = [];              // transient visual markers (fights, disasters)
     this.ruins = [];                // persistent markers for fallen settlements
+    this.graves = [];               // clickable tombstones for dead agents
+    this.nextGraveId = 1;
+    this.milestones = [];           // timeline milestones (icon + summary)
+    this.globalDiscoveries = new Set(); // first-in-the-world tech tracking
     this.routes = new Map();        // "aId-bId" -> {a, b, strength}
     this.tradeMap = new Float32Array(this.world.w * this.world.h);
     this.migrationMap = new Float32Array(this.world.w * this.world.h);
@@ -102,28 +106,71 @@ export class Simulation {
       if (!walkable(w, x, y)) { x = sx; y = sy; }
       this.addAgent(createAgent(this, x, y));
     }
+    // bootstrap marriages between nearby opposite-sex adults so family
+    // formation (and thus births) starts immediately
+    const singles = this.agents.filter(a => a.age > 16 && a.age < 45);
+    for (let i = 0; i < singles.length; i++) {
+      const A = singles[i];
+      if (A.spouse >= 0) continue;
+      const jEnd = Math.min(singles.length, i + 200);
+      for (let j = i + 1; j < jEnd; j++) {
+        const B = singles[j];
+        if (B.spouse >= 0 || B.sex === A.sex) continue;
+        if (dist2(A.x, A.y, B.x, B.y) < 100 && this.rand() < 0.7) {
+          A.spouse = B.id; B.spouse = A.id;
+          break;
+        }
+      }
+    }
   }
 
   addAgent(a) { this.agents.push(a); this.agentById.set(a.id, a); }
 
-  /** Spawn a newborn (used by nomad + settlement reproduction). */
-  spawnBaby(x, y, home) {
-    const baby = createAgent(this, x, y, { age: 0, home });
+  /** A pregnant mother delivers. Child inherits the family surname. */
+  giveBirth(mom) {
+    mom.pregnant = false;
+    mom.pregT = 0;
+    mom.health = clamp(mom.health - 6, 1, 100);
+    mom.energy = clamp(mom.energy - 25, 0, 100);
+    const father = mom.spouse >= 0 ? this.agentById.get(mom.spouse) : null;
+    const baby = createAgent(this, mom.x, mom.y, {
+      age: 0,
+      home: mom.home,
+      mother: mom.id,
+      father: father ? father.id : mom.spouse,
+      lastName: father ? father.lastName : mom.lastName
+    });
     baby.inv.food = 0;
     this.addAgent(baby);
     this.totals.births++;
+    mom.children.push(baby.id);
+    if (father && !father.dead) father.children.push(baby.id);
+    remember(mom, `gave birth to ${baby.firstName}`);
     return baby;
   }
 
-  killAgent(a, cause) {
+  killAgent(a, cause, killer = null) {
     if (a.dead) return;
     a.dead = true;
     this.agentById.delete(a.id);
     this.totals.deaths++;
     this.totals.deathsWindow++;
-    if (a.partner >= 0) {
-      const p = this.agentById.get(a.partner);
-      if (p) { p.partner = -1; remember(p, 'lost a partner'); }
+    // gravestone: clickable on the map, remembers how they died and by whom
+    this.graves.push({
+      id: this.nextGraveId++,
+      x: a.x, y: a.y,
+      name: `${a.firstName} ${a.lastName}`,
+      sex: a.sex,
+      age: a.age | 0,
+      year: (this.tick / TICKS_PER_YEAR) | 0,
+      cause,
+      killer: killer ? (typeof killer === 'string' ? killer : `${killer.firstName} ${killer.lastName}`) : null,
+      tick: this.tick
+    });
+    if (this.graves.length > 350) this.graves.shift();
+    if (a.spouse >= 0) {
+      const p = this.agentById.get(a.spouse);
+      if (p) { p.spouse = -1; remember(p, `mourned ${a.firstName}`); }
     }
     if (cause === 'violence' || cause === 'raid') {
       this.world.danger[tileIndex(this.world, a.x, a.y)] =
@@ -131,9 +178,19 @@ export class Simulation {
     }
   }
 
-  addEvent(text, kind = 'info') {
-    this.events.push({ tick: this.tick, year: (this.tick / TICKS_PER_YEAR) | 0, text, kind });
+  addEvent(text, kind = 'info', icon = null) {
+    const year = (this.tick / TICKS_PER_YEAR) | 0;
+    this.events.push({ tick: this.tick, year, text, kind });
     if (this.events.length > 40) this.events.shift();
+    if (icon) {
+      this.milestones.push({ tick: this.tick, year, icon, kind, text });
+      if (this.milestones.length > 600) this.milestones.shift();
+    }
+  }
+
+  /** Float an emoji above a map location (wars, pacts, plagues...). */
+  iconFlash(x, y, char, ttl = 70) {
+    this.flashes.push({ x, y, ttl, ttl0: ttl, kind: 'icon', char });
   }
 
   contributeBuild(s, agent) { buildContribute(this, s, agent); }
@@ -160,12 +217,14 @@ export class Simulation {
     this.settlements.push(s);
     this.settlementById.set(s.id, s);
     for (const f of founders) { f.home = s.id; remember(f, `helped found ${s.name}`); }
-    this.addEvent(`${s.name} founded (${founders.length} settlers)`, 'good');
+    this.addEvent(`${s.name} founded (${founders.length} settlers)`, 'good', '🏠');
+    this.iconFlash(s.x, s.y, '🏠');
   }
 
   collapseSettlement(s) {
     const downfall = this.getCollapseDownfall(s);
-    this.addEvent(`${s.name} has COLLAPSED — ${downfall.label.toLowerCase()}; survivors scatter`, 'bad');
+    this.addEvent(`${s.name} has COLLAPSED — ${downfall.label.toLowerCase()}; survivors scatter`, 'bad', '💥');
+    this.iconFlash(s.x, s.y, '💥', 90);
     const w = this.world;
     let refugees = 0, casualties = 0;
     for (const a of this.agents) {
@@ -643,7 +702,9 @@ export class Simulation {
     route = { a: A.id, b: B.id, strength: 0.1, path };
     this.routes.set(key, route);
     A.tradePartners.add(B.id); B.tradePartners.add(A.id);
-    this.addEvent(`Trade opens: ${A.name} ↔ ${B.name}`, 'good');
+    this.addEvent(`Trade opens: ${A.name} ↔ ${B.name}`, 'good', '🤝');
+    this.iconFlash(A.x, A.y, '🤝');
+    this.iconFlash(B.x, B.y, '🤝');
     return route;
   }
 
@@ -769,11 +830,13 @@ export class Simulation {
       const def = target.members * (0.5 + target.defense * 1.6) * (0.8 + this.rand() * 0.4);
       const win = atk > def;
       this.flashes.push({ x: target.x, y: target.y, ttl: 45, kind: 'war' });
-      this.addEvent(`${s.name} raids ${target.name}${win ? ' — sacked!' : ' — repelled'}`, 'war');
+      this.addEvent(`${s.name} raids ${target.name}${win ? ' — sacked!' : ' — repelled'}`, 'war', '⚔️');
+      this.iconFlash(target.x, target.y, '⚔️', 80);
+      this.iconFlash(s.x, s.y, '⚔️', 80);
 
       // casualties on both sides, heavier for the loser
-      this.raidCasualties(s, win ? 0.04 : 0.1);
-      this.raidCasualties(target, win ? 0.12 : 0.05);
+      this.raidCasualties(s, win ? 0.04 : 0.1, target.name);
+      this.raidCasualties(target, win ? 0.12 : 0.05, s.name);
       if (win) {
         const loot = target.foodStore * 0.4, gold = target.wealth * 0.35;
         const wood = target.woodStore * 0.25, stone = target.stoneStore * 0.22;
@@ -804,9 +867,11 @@ export class Simulation {
     }
   }
 
-  raidCasualties(s, frac) {
+  raidCasualties(s, frac, byName = null) {
     for (const a of this.agents) {
-      if (!a.dead && a.home === s.id && this.rand() < frac) this.killAgent(a, 'raid');
+      if (!a.dead && a.home === s.id && this.rand() < frac) {
+        this.killAgent(a, 'raid', byName ? `raiders of ${byName}` : null);
+      }
     }
   }
 
@@ -827,7 +892,10 @@ export class Simulation {
             if (this.rand() < 0.5) break;
           }
         }
-        if (seeded && s.sickCount < 2) this.addEvent(`Sickness spreads in ${s.name}`, 'bad');
+        if (seeded && s.sickCount < 2) {
+          this.addEvent(`Sickness spreads in ${s.name}`, 'bad', '☣️');
+          this.iconFlash(s.x, s.y, '☣️', 80);
+        }
       }
     }
     // contact spread via the spatial grid
@@ -863,8 +931,10 @@ export class Simulation {
       else { x = this.rand() * w.w; y = this.rand() * w.h; }
     }
     const R = kind === 'drought' ? 16 : kind === 'wildfire' ? 11 : 9;
+    const DISASTER_ICONS = { drought: '☀️', flood: '🌊', earthquake: '🌋', wildfire: '🔥', plague: '☣️' };
     this.flashes.push({ x, y, ttl: 90, kind: 'disaster', label: kind, r: R });
-    this.addEvent(`⚠ ${kind.toUpperCase()} strikes near (${x | 0},${y | 0})`, 'disaster');
+    this.iconFlash(x, y, DISASTER_ICONS[kind] || '⚠️', 90);
+    this.addEvent(`⚠ ${kind.toUpperCase()} strikes near (${x | 0},${y | 0})`, 'disaster', DISASTER_ICONS[kind] || '⚠️');
 
     const inRange = (i) => {
       const tx = i % w.w, ty = (i / w.w) | 0;
@@ -925,7 +995,7 @@ export class Simulation {
       w.water[i] = Math.max(0, w.water[i] - 18);
     }
     for (const s of this.settlements) if (!s.dead) this.markSettlementShock(s, 'drought');
-    this.addEvent('⚠ CONTINENTAL DROUGHT — food and water crash', 'disaster');
+    this.addEvent('⚠ CONTINENTAL DROUGHT — food and water crash', 'disaster', '☀️');
   }
 
   /** UI: rain of plenty — resources surge back. */
@@ -936,16 +1006,18 @@ export class Simulation {
       w.water[i] = Math.min(100, w.water[i] + 15);
     }
     for (const s of this.settlements) if (!s.dead) s.foodStore += 25;
-    this.addEvent('✦ A season of plenty — resources surge', 'good');
+    this.addEvent('✦ A season of plenty — resources surge', 'good', '✨');
   }
 
-  /** UI: migration pressure — degrade a populated region so people move. */
-  triggerMigrationPressure() {
+  /** UI: migration pressure — degrade a region so people move (targetable). */
+  triggerMigrationPressure(atX, atY) {
     const live = this.settlements.filter(s => !s.dead);
     const w = this.world;
-    let x, y;
-    if (live.length) { const s = pick(this.rand, live); x = s.x; y = s.y; }
-    else { x = w.w / 2; y = w.h / 2; }
+    let x = atX, y = atY;
+    if (x === undefined) {
+      if (live.length) { const s = pick(this.rand, live); x = s.x; y = s.y; }
+      else { x = w.w / 2; y = w.h / 2; }
+    }
     for (let i = 0; i < w.food.length; i++) {
       const tx = i % w.w, ty = (i / w.w) | 0;
       if (dist2(tx, ty, x, y) < 300) {
@@ -962,7 +1034,7 @@ export class Simulation {
         if (this.rand() < 0.5) { a.state = 'migrating'; a.stateT = 0; a.hasTarget = false; }
       }
     }
-    this.addEvent('⚠ Migration pressure — a region turns hostile', 'disaster');
+    this.addEvent('⚠ Migration pressure — a region turns hostile', 'disaster', '👣');
   }
 
   // =========================================================================

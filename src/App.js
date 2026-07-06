@@ -6,6 +6,7 @@ import { Renderer } from './render/renderer.js';
 import Controls, { WORLD_SIZES } from './ui/Controls.js';
 import Analytics from './ui/Analytics.js';
 import Inspector from './ui/Inspector.js';
+import Timeline from './ui/Timeline.js';
 
 const { useEffect, useRef, useState, useCallback } = React;
 const h = React.createElement;
@@ -38,10 +39,14 @@ export default function App() {
   const [showRoutes, setShowRoutesState] = useState(false);
   const [showTrails, setShowTrailsState] = useState(true);
   const [, setSelection] = useState(null);
-  const [ui, setUi] = useState({ stats: {}, events: [], history: emptyHistory(), fps: 0, tps: 0, inspector: null });
+  const [armedGod, setArmedGod] = useState(null); // calamity awaiting a map click
+  const [panel, setPanel] = useState(null); // mobile drawer: null | 'controls' | 'stats'
+  const armedGodRef = useRef(null);
+  const [ui, setUi] = useState({ stats: {}, events: [], history: emptyHistory(), milestones: [], fps: 0, tps: 0, inspector: null });
 
   runningRef.current = running;
   speedRef.current = SPEEDS[speedIdx];
+  armedGodRef.current = armedGod;
 
   // ---- engine bootstrap + master loop (mounted once) ----------------------
   useEffect(() => {
@@ -103,6 +108,7 @@ export default function App() {
           stats: s.stats,
           events: s.events.slice(),
           history: s.history,
+          milestones: s.milestones,
           fps, tps,
           inspector: buildInspector(s, renderer.selected)
         });
@@ -125,6 +131,7 @@ export default function App() {
     rendererRef.current.attach(sim);
     rendererRef.current.selected = null;
     setSelection(null);
+    setPanel(null);
   }, [params, seed, worldSize, stressMode]);
 
   // live parameter changes flow straight into the running engine
@@ -141,22 +148,53 @@ export default function App() {
   const setShowRoutes = (v) => { setShowRoutesState(v); if (rendererRef.current) rendererRef.current.showRoutes = v; };
   const setShowTrails = (v) => { setShowTrailsState(v); if (rendererRef.current) rendererRef.current.showTrails = v; };
 
+  // targetable calamities arm the cursor; the next map click strikes there
+  const TARGETABLE = ['drought', 'plague', 'earthquake', 'wildfire', 'flood', 'migration'];
   const godAction = (kind) => {
     const s = simRef.current;
     if (!s) return;
     if (kind === 'globalDrought') s.forceDrought();
     else if (kind === 'addResources') s.addResources();
-    else if (kind === 'migration') s.triggerMigrationPressure();
-    else s.spawnDisaster(kind);
+    else if (TARGETABLE.includes(kind)) {
+      setArmedGod((cur) => (cur === kind ? null : kind));
+      setPanel(null); // slide the drawer away so the map can be tapped
+    }
   };
 
-  // ---- canvas interaction: drag = pan, wheel = zoom, click = inspect ------
+  // ---- canvas interaction: drag/touch = pan, wheel/pinch = zoom, tap = inspect
   useEffect(() => {
     const canvas = canvasRef.current;
     let dragging = false, moved = false, lx = 0, ly = 0;
+    const pointers = new Map(); // active pointers → pinch support on touch
+    let pinchDist = 0;
 
-    const down = (e) => { dragging = true; moved = false; lx = e.clientX; ly = e.clientY; };
+    const down = (e) => {
+      canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 1) {
+        dragging = true; moved = false; lx = e.clientX; ly = e.clientY;
+      } else if (pointers.size === 2) {
+        // second finger down: switch from pan to pinch
+        dragging = false; moved = true;
+        const [p1, p2] = [...pointers.values()];
+        pinchDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+      }
+    };
     const move = (e) => {
+      if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2) {
+        // pinch: zoom toward the midpoint of the two fingers
+        const [p1, p2] = [...pointers.values()];
+        const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        if (pinchDist > 0 && d > 0) {
+          const rect = canvas.getBoundingClientRect();
+          const mx = (p1.x + p2.x) / 2 - rect.left;
+          const my = (p1.y + p2.y) / 2 - rect.top;
+          rendererRef.current.zoomAt(mx, my, d / pinchDist);
+        }
+        pinchDist = d;
+        return;
+      }
       if (!dragging) return;
       const dx = e.clientX - lx, dy = e.clientY - ly;
       if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
@@ -164,30 +202,57 @@ export default function App() {
       lx = e.clientX; ly = e.clientY;
     };
     const up = (e) => {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinchDist = 0;
       if (dragging && !moved) {
         const rect = canvas.getBoundingClientRect();
-        const hit = rendererRef.current.pickAt(e.clientX - rect.left, e.clientY - rect.top);
-        rendererRef.current.selected = hit;
-        setSelection(hit);
+        if (armedGodRef.current) {
+          // a calamity is armed: this click chooses where it strikes
+          const [wx, wy] = rendererRef.current.screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+          const s = simRef.current;
+          const kind = armedGodRef.current;
+          if (s) {
+            if (kind === 'migration') s.triggerMigrationPressure(wx, wy);
+            else s.spawnDisaster(kind, wx, wy);
+          }
+          setArmedGod(null);
+        } else {
+          const hit = rendererRef.current.pickAt(e.clientX - rect.left, e.clientY - rect.top);
+          rendererRef.current.selected = hit;
+          setSelection(hit);
+        }
       }
       dragging = false;
     };
+    const cancelCtx = (e) => { e.preventDefault(); setArmedGod(null); };
+    const cancelKey = (e) => { if (e.key === 'Escape') setArmedGod(null); };
+    canvas.addEventListener('contextmenu', cancelCtx);
+    window.addEventListener('keydown', cancelKey);
     const wheel = (e) => {
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
       rendererRef.current.zoomAt(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.15 : 0.87);
     };
+    const cancel = (e) => { pointers.delete(e.pointerId); if (pointers.size < 2) pinchDist = 0; dragging = false; };
     canvas.addEventListener('pointerdown', down);
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
     canvas.addEventListener('wheel', wheel, { passive: false });
     return () => {
       canvas.removeEventListener('pointerdown', down);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       canvas.removeEventListener('wheel', wheel);
+      window.removeEventListener('pointercancel', cancel);
+      canvas.removeEventListener('contextmenu', cancelCtx);
+      window.removeEventListener('keydown', cancelKey);
     };
   }, []);
+
+  useEffect(() => {
+    if (canvasRef.current) canvasRef.current.style.cursor = armedGod ? 'crosshair' : '';
+  }, [armedGod]);
 
   const clearSelection = () => { setSelection(null); if (rendererRef.current) rendererRef.current.selected = null; };
   const st = ui.stats || {};
@@ -197,6 +262,10 @@ export default function App() {
 
   return h('div', { className: 'app' },
     h('div', { className: 'topbar' },
+      h('button', {
+        className: 'mobile-only' + (panel === 'controls' ? ' on' : ''),
+        onClick: () => setPanel(panel === 'controls' ? null : 'controls')
+      }, '☰'),
       h('h1', null, '⬡ HUMAN CIVILIZATION EMERGENCE SIMULATOR'),
       h('button', { className: 'primary', onClick: () => setRunning(!running) }, running ? '❚❚ Pause' : '▶ Play'),
       h('div', { style: { display: 'flex', gap: 4 } },
@@ -209,21 +278,28 @@ export default function App() {
       h('button', { onClick: restart }, '⟲ Restart'),
       h('div', { className: 'spacer' }),
       h('span', { className: 'chip' }, 'Year ', h('b', null, st.year ?? 0)),
-      h('span', { className: 'chip' }, 'Tick ', h('b', null, st.tick ?? 0)),
+      h('span', { className: 'chip hide-sm' }, 'Tick ', h('b', null, st.tick ?? 0)),
       h('span', { className: 'chip' }, 'Pop ', h('b', null, st.population ?? 0)),
-      h('span', { className: 'chip' }, h('b', null, ui.fps), ' fps · ', h('b', null, ui.tps), ' tps')
+      h('span', { className: 'chip hide-sm' }, h('b', null, ui.fps), ' fps · ', h('b', null, ui.tps), ' tps'),
+      h('button', {
+        className: 'mobile-only' + (panel === 'stats' ? ' on' : ''),
+        onClick: () => setPanel(panel === 'stats' ? null : 'stats')
+      }, '📊')
     ),
 
-    h('div', { className: 'main' },
+    h('div', {
+      className: 'main' + (panel === 'controls' ? ' show-left' : panel === 'stats' ? ' show-right' : '')
+    },
+      panel ? h('div', { className: 'drawer-backdrop', onClick: () => setPanel(null) }) : null,
       h(Controls, {
         params, setParam, seed, setSeed, worldSize, setWorldSize,
         onRestart: restart, overlay, setOverlay,
         showRoutes, setShowRoutes, showTrails, setShowTrails,
-        godAction, stressMode, setStressMode
+        godAction, armedGod, stressMode, setStressMode
       }),
 
       h('div', { className: 'map-area' },
-        h('canvas', { ref: canvasRef }),
+        h('canvas', { ref: canvasRef, style: { touchAction: 'none' } }),
         h('div', { className: 'legend' },
           legendRow('#1d4e7a', 'Water'),
           legendRow('#607a46', 'Plains'),
@@ -241,6 +317,9 @@ export default function App() {
             ? h('div', { className: 'row', style: { marginTop: 4, color: 'var(--accent)' } }, 'Overlay: ' + overlay)
             : null
         ),
+        armedGod ? h('div', { className: 'god-banner' },
+          `☄ Click the map to unleash ${armedGod.toUpperCase()} — Esc or right-click to cancel`) : null,
+        h(Timeline, { milestones: ui.milestones || [], tick: st.tick || 0, ticksPerYear: TICKS_PER_YEAR }),
         h(Inspector, { data: ui.inspector, onClose: clearSelection })
       ),
 
@@ -270,16 +349,33 @@ function buildInspector(sim, sel) {
       .map(([k, v]) => `${k} ${(v * 100) | 0}%`);
     let friends = 0, enemies = 0;
     for (const v of a.rel.values()) { if (v > 0.3) friends++; else if (v < -0.3) enemies++; }
+    const spouse = a.spouse >= 0 ? sim.agentById.get(a.spouse) : null;
+    const mother = a.mother >= 0 ? sim.agentById.get(a.mother) : null;
+    const father = a.father >= 0 ? sim.agentById.get(a.father) : null;
+    let kidsAlive = 0;
+    for (const cid of a.children) if (sim.agentById.get(cid)) kidsAlive++;
     return {
       type: 'agent', id: a.id,
+      name: `${a.firstName} ${a.lastName}`,
+      sex: a.sex,
+      pregnant: !!a.pregnant,
       stateLabel: a.state, age: a.age | 0,
       homeName: home ? `of ${home.name}` : 'nomad',
       health: a.health | 0, hunger: a.hunger | 0, thirst: a.thirst | 0,
       energy: a.energy | 0, fear: a.fear | 0, sick: a.sick,
       food: a.inv.food.toFixed(1), wood: a.inv.wood.toFixed(1), wealth: a.inv.wealth.toFixed(1),
-      partner: a.partner >= 0 ? `#${a.partner}` : '—',
+      spouseName: spouse ? `${spouse.firstName} ${spouse.lastName}` : (a.spouse >= 0 ? 'widowed' : '—'),
+      childrenLabel: a.children.length ? `${kidsAlive} living of ${a.children.length}` : '—',
+      parents: (mother || father)
+        ? `${mother ? mother.firstName : '†'} & ${father ? father.firstName : '†'}`
+        : (a.mother >= 0 || a.father >= 0 ? 'deceased' : 'unknown'),
       friends, enemies, traits, skills, memory: a.memory.slice(-4)
     };
+  }
+  if (sel.type === 'grave') {
+    const gr = sim.graves.find((g) => g.id === sel.id);
+    if (!gr) return null;
+    return { type: 'grave', ...gr };
   }
   if (sel.type === 'ruin') {
     const r = sim.ruins?.find((ruin) => ruin.id === sel.id);

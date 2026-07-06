@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <title>Dawnline</title>
 <style>
 /* ------------------------------------------------------------------------
@@ -209,6 +209,141 @@ select option { background: #0d1320; }
 ::-webkit-scrollbar-thumb { background: rgba(125, 211, 252, 0.18); border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
+/* ---------- milestone timeline (birds on a wire) ---------- */
+.timeline {
+  position: absolute; left: 12px; right: 12px; bottom: 12px; height: 78px;
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: 12px; z-index: 18; overflow: hidden;
+  backdrop-filter: blur(6px);
+}
+.timeline .tl-title {
+  position: absolute; left: 10px; top: 5px; font-size: 9px;
+  letter-spacing: 0.14em; color: var(--accent2); font-weight: 600;
+}
+.timeline .wire {
+  position: absolute; left: 0; right: 0; bottom: 24px; height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(125,211,252,0.55) 6%, rgba(125,211,252,0.55) 94%, transparent);
+  box-shadow: 0 0 8px rgba(125, 211, 252, 0.35);
+}
+.timeline .yearmark {
+  position: absolute; bottom: 3px; transform: translateX(-50%);
+  color: var(--text-dim); font-size: 9px; text-align: center; pointer-events: none;
+}
+.timeline .yearmark .tickline { width: 1px; height: 7px; background: rgba(125,211,252,0.4); margin: 0 auto 1px; }
+.timeline .milestone {
+  position: absolute; bottom: 22px; transform: translateX(-50%);
+  background: none; border: none; font-size: 15px; padding: 1px 2px;
+  cursor: pointer; line-height: 1;
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,0.7));
+  transition: transform 0.1s;
+}
+.timeline .milestone:hover { transform: translateX(-50%) scale(1.4); z-index: 3; }
+.timeline .milestone.row1 { bottom: 40px; }
+.tl-now {
+  position: absolute; right: 10px; top: 5px;
+  font-family: var(--mono); font-size: 10px; color: var(--accent); font-weight: 600;
+}
+.tl-popup {
+  position: absolute; top: 3px; transform: translateX(-50%);
+  background: #0e1728; border: 1px solid rgba(94, 234, 212, 0.45);
+  color: var(--text); border-radius: 8px; padding: 4px 10px; font-size: 11px;
+  max-width: 380px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  z-index: 6; box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+.tl-popup b { color: var(--accent2); }
+
+/* ---------- god-tool targeting ---------- */
+.god-banner {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  background: rgba(140, 35, 50, 0.88); border: 1px solid rgba(255, 120, 120, 0.65);
+  color: #ffe4e4; padding: 6px 16px; border-radius: 20px; font-size: 12px;
+  font-weight: 600; z-index: 25; backdrop-filter: blur(4px);
+  box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+  pointer-events: none;
+}
+
+/* inspector sits above the timeline now */
+.inspector { bottom: 100px; }
+
+/* ------------------------------------------------------------------------
+   MOBILE / TABLET (≤1020px): sidebars become slide-in drawers over a
+   full-width map; touch targets grow; chrome compacts. Desktop unchanged.
+   ------------------------------------------------------------------------ */
+.mobile-only { display: none; }
+.drawer-backdrop { display: none; }
+
+@media (max-width: 1020px) {
+  html, body, #root { height: 100dvh; } /* survives mobile URL-bar collapse */
+
+  .mobile-only {
+    display: inline-block;
+    font-size: 16px; padding: 6px 12px;
+  }
+
+  /* top bar: single scrollable strip */
+  .topbar {
+    gap: 8px; padding: 6px 8px;
+    flex-wrap: nowrap; overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .topbar::-webkit-scrollbar { display: none; }
+  .topbar h1 { font-size: 12px; letter-spacing: 0.03em; }
+
+  /* sidebars → off-canvas drawers above the map */
+  .sidebar {
+    position: absolute; top: 0; bottom: 0; left: 0;
+    width: min(82vw, 320px); min-width: 0;
+    z-index: 40;
+    transform: translateX(-103%);
+    transition: transform 0.25s ease;
+    box-shadow: 10px 0 34px rgba(0, 0, 0, 0.55);
+  }
+  .sidebar.right {
+    left: auto; right: 0;
+    width: min(88vw, 336px); min-width: 0;
+    transform: translateX(103%);
+    box-shadow: -10px 0 34px rgba(0, 0, 0, 0.55);
+  }
+  .main.show-left .sidebar:not(.right) { transform: translateX(0); }
+  .main.show-right .sidebar.right { transform: translateX(0); }
+
+  .drawer-backdrop {
+    display: block; position: absolute; inset: 0; z-index: 35;
+    background: rgba(3, 6, 12, 0.55);
+    backdrop-filter: blur(2px);
+  }
+
+  /* map furniture: give the world room */
+  .legend { display: none; }
+  .inspector {
+    left: 8px; right: 8px; width: auto;
+    bottom: 84px; max-height: 42%;
+    z-index: 30;
+  }
+  .timeline { left: 8px; right: 8px; bottom: 8px; height: 62px; }
+  .timeline .tl-title { display: none; }
+  .timeline .milestone { font-size: 17px; }
+  .timeline .milestone.row1 { bottom: 34px; }
+  .god-banner { font-size: 11px; padding: 5px 12px; max-width: 92vw; text-align: center; }
+
+  /* finger-sized interactive elements */
+  button { padding: 8px 12px; font-size: 13px; }
+  button.tiny { padding: 6px 9px; font-size: 12px; }
+  .overlay-grid button { padding: 6px 10px; font-size: 11.5px; }
+  input[type="range"] { height: 6px; }
+  input[type="range"]::-webkit-slider-thumb { width: 21px; height: 21px; }
+  input[type="text"], select { padding: 8px 10px; font-size: 13px; }
+  .sidebar { padding: 14px 14px 40px; } /* extra bottom space past home bars */
+}
+
+@media (max-width: 700px) {
+  .topbar h1 { display: none; }   /* icons + chips only on phones */
+  .chip.hide-sm { display: none; }
+  .chip { font-size: 10px; padding: 3px 7px; }
+  .inspector { max-height: 38%; }
+}
+
 </style>
 </head>
 <body>
@@ -312,6 +447,50 @@ const SYL_B = ['an', 'or', 'eth', 'ia', 'un', 'ar', 'iel', 'os', 'em', 'ash', 'i
 const SYL_C = ['grad', 'holm', 'wick', 'dun', 'mor', 'stead', 'fell', 'gate', 'reach', 'haven', 'crest', ''];
 function makeName(rand) {
   return pick(rand, SYL_A) + pick(rand, SYL_B) + (rand() < 0.65 ? pick(rand, SYL_C) : '');
+}
+
+// ========== src/engine/names.js ==========
+// ---------------------------------------------------------------------------
+// Procedural identities. Name pools deliberately span many cultures so the
+// population feels like humanity, not one village. Children inherit their
+// father's surname when known, otherwise their mother's.
+// ---------------------------------------------------------------------------
+
+const MALE_NAMES = [
+  'Amir', 'Bjorn', 'Chen', 'Diego', 'Emeka', 'Farid', 'Goran', 'Hiro', 'Ivan', 'Jamal',
+  'Kofi', 'Luca', 'Mateo', 'Nikolai', 'Omar', 'Pavel', 'Quang', 'Ravi', 'Santiago', 'Tariq',
+  'Umar', 'Viktor', 'Wei', 'Xavier', 'Yusuf', 'Zhen', 'Arjun', 'Dmitri', 'Enzo', 'Hassan',
+  'Idris', 'Joon', 'Kenji', 'Leif', 'Marco', 'Nnamdi', 'Otto', 'Pedro', 'Rashid', 'Stefan',
+  'Takeshi', 'Ulf', 'Vikram', 'Werner', 'Yannick', 'Zoltan', 'Anders', 'Bruno', 'Carlos', 'Dae',
+  'Elias', 'Femi', 'Gustav', 'Henrik', 'Ismail', 'Jorge', 'Kwame', 'Liang', 'Mikhail', 'Nuno'
+];
+
+const FEMALE_NAMES = [
+  'Aisha', 'Bianca', 'Chioma', 'Daniela', 'Elena', 'Fatima', 'Greta', 'Hana', 'Ingrid', 'Jasmine',
+  'Keiko', 'Leila', 'Mei', 'Nadia', 'Olga', 'Priya', 'Qi', 'Rosa', 'Sofia', 'Tala',
+  'Uma', 'Valentina', 'Wren', 'Xiu', 'Yuki', 'Zara', 'Amara', 'Beatriz', 'Carmen', 'Devi',
+  'Esther', 'Freya', 'Gabriela', 'Halima', 'Ines', 'Jin', 'Katya', 'Lucia', 'Marisol', 'Naomi',
+  'Oksana', 'Paloma', 'Rina', 'Sana', 'Thea', 'Ulla', 'Vera', 'Willa', 'Yasmin', 'Zainab',
+  'Anya', 'Brigitta', 'Camille', 'Dalia', 'Emiko', 'Farah', 'Gita', 'Hilde', 'Imani', 'Jana'
+];
+
+const SURNAMES = [
+  'Okafor', 'Tanaka', 'Silva', 'Petrov', 'Nguyen', 'Haddad', 'Kowalski', 'Ademola', 'Rossi', 'Kimura',
+  'Osei', 'Vargas', 'Lindqvist', 'Sharma', 'Castillo', 'Dubois', 'Eriksson', 'Farouk', 'Gonzalez', 'Hansen',
+  'Ibrahim', 'Jansen', 'Kaur', 'Lopez', 'Mbeki', 'Nakamura', 'Olsen', 'Popov', 'Quraishi', 'Ramirez',
+  'Sato', 'Toure', 'Ueda', 'Volkov', 'Watanabe', 'Xu', 'Yamamoto', 'Zhao', 'Abara', 'Bergman',
+  'Cruz', 'Diallo', 'Endo', 'Fischer', 'Garcia', 'Hussein', 'Ito', 'Johansson', 'Khan', 'Larsen',
+  'Mensah', 'Novak', 'Obi', 'Park', 'Reyes', 'Suzuki', 'Tran', 'Umeh', 'Vasquez', 'Weber'
+];
+
+function firstNameFor(rand, sex) {
+  return pick(rand, sex === 'F' ? FEMALE_NAMES : MALE_NAMES);
+}
+function surname(rand) {
+  return pick(rand, SURNAMES);
+}
+function fullName(a) {
+  return a.firstName + ' ' + a.lastName;
 }
 
 // ========== src/engine/world.js ==========
@@ -579,6 +758,7 @@ function findBestTile(world, x, y, radius, score) {
 // ---------------------------------------------------------------------------
 
 
+
 const TICKS_PER_YEAR = 30;
 
 let SKILL_NAMES = ['gather', 'farm', 'build', 'fight', 'trade', 'heal', 'explore'];
@@ -586,8 +766,12 @@ let SKILL_NAMES = ['gather', 'farm', 'build', 'fight', 'trade', 'heal', 'explore
 /** Create one agent. Personality traits are stable; needs fluctuate. */
 function createAgent(sim, x, y, opts = {}) {
   const r = sim.rand;
+  const sex = opts.sex || (r() < 0.5 ? 'M' : 'F');
   const a = {
     id: sim.nextAgentId++,
+    sex,
+    firstName: firstNameFor(r, sex),
+    lastName: opts.lastName || surname(r),
     x, y, tx: x, ty: y, hasTarget: false,
     px: x, py: y, // position at the start of the current tick (for render interpolation)
     age: opts.age !== undefined ? opts.age : 14 + r() * 22,
@@ -603,7 +787,12 @@ function createAgent(sim, x, y, opts = {}) {
     sick: false, immunity: r() * 0.3, sickT: 0,
     inv: { food: 2 + r() * 4, wood: 0, stone: 0, wealth: r() * 2 },
     home: opts.home !== undefined ? opts.home : -1,
-    partner: -1,
+    spouse: -1,
+    mother: opts.mother !== undefined ? opts.mother : -1,
+    father: opts.father !== undefined ? opts.father : -1,
+    children: [], guardian: -1,
+    pregnant: false, pregT: 0,
+    lastHurt: null,
     rel: new Map(),          // id -> -1..1 trust/hostility
     memory: [],              // short ring of recent event strings
     state: 'idle', stateT: 0,
@@ -622,6 +811,15 @@ function createAgent(sim, x, y, opts = {}) {
   for (const s of SKILL_NAMES) a.skills[s] /= total;
   const spec = SKILL_NAMES[(r() * SKILL_NAMES.length) | 0];
   a.skills[spec] += 0.25;
+  // mild sex-based stat shifts (population-level flavour, not hard gates)
+  if (sex === 'M') {
+    a.skills.fight = Math.min(1, a.skills.fight * 1.3);
+    a.aggression = clamp(a.aggression * 1.25, 0, 1);
+  } else {
+    a.empathy = clamp(a.empathy + 0.12, 0, 1);
+    a.sociability = clamp(a.sociability + 0.08, 0, 1);
+    a.skills.heal = Math.min(1, a.skills.heal * 1.25);
+  }
   return a;
 }
 
@@ -860,7 +1058,21 @@ function updateAgent(sim, a) {
 
   // ageing mortality (rises sharply past ~55 sim-years)
   if (a.age > 55 && sim.rand() < (a.age - 55) * 0.00012) a.health = -1;
-  if (a.health <= 0) { sim.killAgent(a, a.sick ? 'disease' : a.hunger >= 98 ? 'starvation' : 'death'); return; }
+  if (a.health <= 0) {
+    sim.killAgent(a, a.sick ? 'disease'
+      : a.hunger >= 98 ? 'starvation'
+      : a.thirst >= 98 ? 'dehydration'
+      : a.age > 55 ? 'old age'
+      : (a.lastHurt || 'hardship'));
+    return;
+  }
+
+  // ---- children: stay with family, no independent utility AI --------------
+  // (fixes toddlers wandering the wilderness alone)
+  if (a.age < 14) {
+    updateChild(sim, a, home);
+    return;
+  }
 
   // ---- re-decide periodically or when current state has run its course ----
   a.stateT++;
@@ -939,11 +1151,13 @@ function updateAgent(sim, a) {
           const warmth = 0.05 + a.empathy * 0.05;
           remember(a, 'shared stories', b, warmth);
           remember(b, 'shared stories', a, warmth);
-          // pair-bond if both unattached and friendly
-          if (a.partner < 0 && b.partner < 0 && (a.rel.get(b.id) || 0) > 0.35 &&
-              a.age > 15 && a.age < 50 && b.age > 15 && b.age < 50) {
-            a.partner = b.id; b.partner = a.id;
-            remember(a, 'found a partner', b, 0.3);
+          // marriage: opposite-sex singles who have grown to trust each other
+          if (a.spouse < 0 && b.spouse < 0 && a.sex !== b.sex &&
+              (a.rel.get(b.id) || 0) > 0.35 &&
+              a.age > 16 && a.age < 50 && b.age > 16 && b.age < 50) {
+            a.spouse = b.id; b.spouse = a.id;
+            remember(a, `married ${b.firstName}`, b, 0.4);
+            remember(b, `married ${a.firstName}`, a, 0.4);
           }
           break;
         }
@@ -1014,6 +1228,7 @@ function updateAgent(sim, a) {
     a.fear = clamp(a.fear + 40, 0, 100);
     a.threatX = a.x + (sim.rand() - 0.5) * 2; a.threatY = a.y + (sim.rand() - 0.5) * 2;
     remember(a, 'attacked by predators');
+    a.lastHurt = 'wild animals';
   }
 
   // ---- group dynamics for the homeless: found or join settlements ----
@@ -1044,11 +1259,40 @@ function updateAgent(sim, a) {
     setState(sim, a, 'migrating');
   }
 
-  // ---- nomad reproduction (settlement births are handled by settlements) ---
-  if (a.home < 0 && a.age > 16 && a.age < 45 && a.health > 55 && a.hunger < 55 &&
-      sim.rand() < 0.0025 * a.fertility * (a.partner >= 0 ? 1.7 : 0.7)) {
-    const baby = sim.spawnBaby(a.x, a.y, -1);
-    if (baby) { remember(a, 'a child was born'); a.inv.food = Math.max(0, a.inv.food - 2); }
+  // ---- courtship: single adults near each other may marry ----
+  if (a.spouse < 0 && a.age > 16 && a.age < 50 && (sim.tick + a.id) % 50 === 0 &&
+      a.sociability > 0.2) {
+    const ids = nearbyAgents(sim, a.x, a.y, 3);
+    for (const id of ids) {
+      if (id === a.id) continue;
+      const b = sim.agentById.get(id);
+      if (b && !b.dead && b.spouse < 0 && b.sex !== a.sex &&
+          b.age > 16 && b.age < 50 && sim.rand() < 0.5) {
+        a.spouse = b.id; b.spouse = a.id;
+        remember(a, `married ${b.firstName}`, b, 0.4);
+        remember(b, `married ${a.firstName}`, a, 0.4);
+        break;
+      }
+    }
+  }
+
+  // ---- conception: married women may become pregnant when life is stable --
+  if (a.sex === 'F' && !a.pregnant && a.spouse >= 0 && a.age > 16 && a.age < 45 &&
+      a.health > 55 && a.hunger < 60) {
+    const husband = sim.agentById.get(a.spouse);
+    if (husband && !husband.dead) {
+      // settlement provides a family climate (food security, housing, stability)
+      const factor = home ? (home.birthFactor !== undefined ? home.birthFactor : 0.5) : 0.45;
+      if (sim.rand() < 0.014 * a.fertility * factor) {
+        a.pregnant = true; a.pregT = 0;
+        remember(a, 'expecting a child');
+      }
+    }
+  }
+  // pregnancy progresses; birth after ~9 months (24 ticks)
+  if (a.pregnant) {
+    a.pregT++;
+    if (a.pregT >= 24) sim.giveBirth(a);
   }
 
   // ---- auto-deposit surplus when passing near home ----
@@ -1065,13 +1309,14 @@ function updateAgent(sim, a) {
   }
 }
 
-/** Melee resolution between two agents. Winner may loot; both remember it. */
+/**  Melee resolution between two agents. Winner may loot; both remember it. */
 function resolveCombat(sim, a, b) {
   const pa = a.skills.fight * (0.5 + a.health / 150) * (1 + a.aggression);
   const pb = b.skills.fight * (0.5 + b.health / 150) * (1 + b.aggression);
   const dmgToB = 6 + pa * 14 * sim.rand();
   const dmgToA = 4 + pb * 12 * sim.rand();
   b.health -= dmgToB; a.health -= dmgToA;
+  a.lastHurt = 'battle wounds'; b.lastHurt = 'battle wounds';
   b.fear = clamp(b.fear + 35, 0, 100);
   b.threatX = a.x; b.threatY = a.y;
   remember(a, 'fought', b, -0.3);
@@ -1081,10 +1326,64 @@ function resolveCombat(sim, a, b) {
     a.kills++;
     a.inv.food += b.inv.food * 0.7; a.inv.wealth += b.inv.wealth * 0.7;
     reinforce(a, 'raid', 0.8);
-    sim.killAgent(b, 'violence');
+    sim.killAgent(b, 'violence', a);
   } else if (a.health < 30) {
     reinforce(a, 'raid', -0.6);
     a.fear = 80; setState(sim, a, 'fleeing');
+  }
+}
+
+// --------------------------------------------------------------------------
+// CHILDHOOD: children follow their mother (or father / adoptive guardian),
+// share the caretaker's food, and only strike out on their own at 14.
+// Orphans decay fast in the wild unless an empathetic adult adopts them.
+// --------------------------------------------------------------------------
+function updateChild(sim, a, home) {
+  a.state = 'child';
+  // find a living caretaker: mother first, then father, then guardian
+  let care = null;
+  for (const id of [a.mother, a.father, a.guardian]) {
+    if (id >= 0) {
+      const p = sim.agentById.get(id);
+      if (p && !p.dead) { care = p; break; }
+    }
+  }
+  if (care) {
+    // stay close; toddle after the caretaker
+    if (dist2(a.x, a.y, care.x, care.y) > 4) {
+      setTarget(a, care.x + (sim.rand() - 0.5), care.y + (sim.rand() - 0.5));
+    }
+    move(sim, a, 0.3);
+    // caretaker shares food
+    if (a.hunger > 45 && care.inv.food > 1) {
+      care.inv.food -= 1.5;
+      a.hunger = clamp(a.hunger - 18, 0, 100);
+    }
+  } else {
+    // ORPHAN: exposure, fear, and predators loom — grim odds alone
+    a.health -= 0.25;
+    a.fear = clamp(a.fear + 0.5, 0, 100);
+    a.lastHurt = 'exposure as an orphan';
+    if (home) { setTarget(a, home.x, home.y); move(sim, a, 0.24); }
+    // seek adoption: a nearby empathetic adult may take the child in
+    if ((sim.tick + a.id) % 25 === 0) {
+      const ids = nearbyAgents(sim, a.x, a.y, 4);
+      for (const id of ids) {
+        const p = sim.agentById.get(id);
+        if (p && !p.dead && p.age >= 16 && p.empathy > 0.45) {
+          a.guardian = p.id;
+          p.children.push(a.id);
+          remember(p, `adopted little ${a.firstName}`);
+          remember(a, `taken in by ${p.firstName}`, p, 0.6);
+          break;
+        }
+      }
+    }
+  }
+  // trail continuity for rendering
+  if (sim.tick % 4 === 0) {
+    a.trail.push(a.x, a.y);
+    if (a.trail.length > 16) a.trail.splice(0, 2);
   }
 }
 
@@ -1183,7 +1482,9 @@ function updateSettlement(sim, s) {
   for (const [lvl, name] of DISCOVERIES) {
     if (s.tech >= lvl && !s.discoveries.includes(name)) {
       s.discoveries.push(name);
-      sim.addEvent(`${s.name} discovered ${name}`, 'tech');
+      const firstEver = !sim.globalDiscoveries.has(name);
+      if (firstEver) sim.globalDiscoveries.add(name);
+      sim.addEvent(`${s.name} discovered ${name}`, 'tech', firstEver ? '💡' : null);
       cultureShift(s, 'innovative', 0.04);
       if (name === 'Agriculture') cultureShift(s, 'communal', 0.05);
       if (name === 'Metallurgy') { s.defense += 0.15; cultureShift(s, 'militaristic', 0.03); }
@@ -1218,12 +1519,9 @@ function updateSettlement(sim, s) {
   const infraCap = cap + s.buildings.farms * 35 + s.buildings.granary * 20 +
     s.buildings.market * 18 + Math.min(s.tech, 12) * 7;
   const capacityFactor = s.members < infraCap ? 1 : clamp(infraCap / Math.max(1, s.members), 0.04, 0.35);
-  const birthP = 0.012 * s.members * clamp(perCapita / 1.2, 0.25, 1.35) *
-    capacityFactor * (1 - stabilityPenalty(s));
-  if (r() < birthP) {
-    sim.spawnBaby(s.x + (r() - 0.5), s.y + (r() - 0.5), s.id);
-    s.foodStore = Math.max(0, s.foodStore - 3);
-  }
+  // births now emerge from agent-level marriage + pregnancy (agents.js);
+  // the settlement contributes a 'family climate' factor read at conception.
+  s.birthFactor = clamp(perCapita / 1.2, 0.25, 1.35) * capacityFactor * (1 - stabilityPenalty(s));
 
   // ---- culture drift: environment + events + slow random walk ----
   if (sim.tick % 20 === 0) {
@@ -1411,6 +1709,10 @@ class Simulation {
     this.events = [];               // rolling event log for the UI
     this.flashes = [];              // transient visual markers (fights, disasters)
     this.ruins = [];                // persistent markers for fallen settlements
+    this.graves = [];               // clickable tombstones for dead agents
+    this.nextGraveId = 1;
+    this.milestones = [];           // timeline milestones (icon + summary)
+    this.globalDiscoveries = new Set(); // first-in-the-world tech tracking
     this.routes = new Map();        // "aId-bId" -> {a, b, strength}
     this.tradeMap = new Float32Array(this.world.w * this.world.h);
     this.migrationMap = new Float32Array(this.world.w * this.world.h);
@@ -1445,28 +1747,71 @@ class Simulation {
       if (!walkable(w, x, y)) { x = sx; y = sy; }
       this.addAgent(createAgent(this, x, y));
     }
+    // bootstrap marriages between nearby opposite-sex adults so family
+    // formation (and thus births) starts immediately
+    const singles = this.agents.filter(a => a.age > 16 && a.age < 45);
+    for (let i = 0; i < singles.length; i++) {
+      const A = singles[i];
+      if (A.spouse >= 0) continue;
+      const jEnd = Math.min(singles.length, i + 200);
+      for (let j = i + 1; j < jEnd; j++) {
+        const B = singles[j];
+        if (B.spouse >= 0 || B.sex === A.sex) continue;
+        if (dist2(A.x, A.y, B.x, B.y) < 100 && this.rand() < 0.7) {
+          A.spouse = B.id; B.spouse = A.id;
+          break;
+        }
+      }
+    }
   }
 
   addAgent(a) { this.agents.push(a); this.agentById.set(a.id, a); }
 
-  /** Spawn a newborn (used by nomad + settlement reproduction). */
-  spawnBaby(x, y, home) {
-    const baby = createAgent(this, x, y, { age: 0, home });
+  /** A pregnant mother delivers. Child inherits the family surname. */
+  giveBirth(mom) {
+    mom.pregnant = false;
+    mom.pregT = 0;
+    mom.health = clamp(mom.health - 6, 1, 100);
+    mom.energy = clamp(mom.energy - 25, 0, 100);
+    const father = mom.spouse >= 0 ? this.agentById.get(mom.spouse) : null;
+    const baby = createAgent(this, mom.x, mom.y, {
+      age: 0,
+      home: mom.home,
+      mother: mom.id,
+      father: father ? father.id : mom.spouse,
+      lastName: father ? father.lastName : mom.lastName
+    });
     baby.inv.food = 0;
     this.addAgent(baby);
     this.totals.births++;
+    mom.children.push(baby.id);
+    if (father && !father.dead) father.children.push(baby.id);
+    remember(mom, `gave birth to ${baby.firstName}`);
     return baby;
   }
 
-  killAgent(a, cause) {
+  killAgent(a, cause, killer = null) {
     if (a.dead) return;
     a.dead = true;
     this.agentById.delete(a.id);
     this.totals.deaths++;
     this.totals.deathsWindow++;
-    if (a.partner >= 0) {
-      const p = this.agentById.get(a.partner);
-      if (p) { p.partner = -1; remember(p, 'lost a partner'); }
+    // gravestone: clickable on the map, remembers how they died and by whom
+    this.graves.push({
+      id: this.nextGraveId++,
+      x: a.x, y: a.y,
+      name: `${a.firstName} ${a.lastName}`,
+      sex: a.sex,
+      age: a.age | 0,
+      year: (this.tick / TICKS_PER_YEAR) | 0,
+      cause,
+      killer: killer ? (typeof killer === 'string' ? killer : `${killer.firstName} ${killer.lastName}`) : null,
+      tick: this.tick
+    });
+    if (this.graves.length > 350) this.graves.shift();
+    if (a.spouse >= 0) {
+      const p = this.agentById.get(a.spouse);
+      if (p) { p.spouse = -1; remember(p, `mourned ${a.firstName}`); }
     }
     if (cause === 'violence' || cause === 'raid') {
       this.world.danger[tileIndex(this.world, a.x, a.y)] =
@@ -1474,9 +1819,19 @@ class Simulation {
     }
   }
 
-  addEvent(text, kind = 'info') {
-    this.events.push({ tick: this.tick, year: (this.tick / TICKS_PER_YEAR) | 0, text, kind });
+  addEvent(text, kind = 'info', icon = null) {
+    const year = (this.tick / TICKS_PER_YEAR) | 0;
+    this.events.push({ tick: this.tick, year, text, kind });
     if (this.events.length > 40) this.events.shift();
+    if (icon) {
+      this.milestones.push({ tick: this.tick, year, icon, kind, text });
+      if (this.milestones.length > 600) this.milestones.shift();
+    }
+  }
+
+  /** Float an emoji above a map location (wars, pacts, plagues...). */
+  iconFlash(x, y, char, ttl = 70) {
+    this.flashes.push({ x, y, ttl, ttl0: ttl, kind: 'icon', char });
   }
 
   contributeBuild(s, agent) { buildContribute(this, s, agent); }
@@ -1503,12 +1858,14 @@ class Simulation {
     this.settlements.push(s);
     this.settlementById.set(s.id, s);
     for (const f of founders) { f.home = s.id; remember(f, `helped found ${s.name}`); }
-    this.addEvent(`${s.name} founded (${founders.length} settlers)`, 'good');
+    this.addEvent(`${s.name} founded (${founders.length} settlers)`, 'good', '🏠');
+    this.iconFlash(s.x, s.y, '🏠');
   }
 
   collapseSettlement(s) {
     const downfall = this.getCollapseDownfall(s);
-    this.addEvent(`${s.name} has COLLAPSED — ${downfall.label.toLowerCase()}; survivors scatter`, 'bad');
+    this.addEvent(`${s.name} has COLLAPSED — ${downfall.label.toLowerCase()}; survivors scatter`, 'bad', '💥');
+    this.iconFlash(s.x, s.y, '💥', 90);
     const w = this.world;
     let refugees = 0, casualties = 0;
     for (const a of this.agents) {
@@ -1986,7 +2343,9 @@ class Simulation {
     route = { a: A.id, b: B.id, strength: 0.1, path };
     this.routes.set(key, route);
     A.tradePartners.add(B.id); B.tradePartners.add(A.id);
-    this.addEvent(`Trade opens: ${A.name} ↔ ${B.name}`, 'good');
+    this.addEvent(`Trade opens: ${A.name} ↔ ${B.name}`, 'good', '🤝');
+    this.iconFlash(A.x, A.y, '🤝');
+    this.iconFlash(B.x, B.y, '🤝');
     return route;
   }
 
@@ -2112,11 +2471,13 @@ class Simulation {
       const def = target.members * (0.5 + target.defense * 1.6) * (0.8 + this.rand() * 0.4);
       const win = atk > def;
       this.flashes.push({ x: target.x, y: target.y, ttl: 45, kind: 'war' });
-      this.addEvent(`${s.name} raids ${target.name}${win ? ' — sacked!' : ' — repelled'}`, 'war');
+      this.addEvent(`${s.name} raids ${target.name}${win ? ' — sacked!' : ' — repelled'}`, 'war', '⚔️');
+      this.iconFlash(target.x, target.y, '⚔️', 80);
+      this.iconFlash(s.x, s.y, '⚔️', 80);
 
       // casualties on both sides, heavier for the loser
-      this.raidCasualties(s, win ? 0.04 : 0.1);
-      this.raidCasualties(target, win ? 0.12 : 0.05);
+      this.raidCasualties(s, win ? 0.04 : 0.1, target.name);
+      this.raidCasualties(target, win ? 0.12 : 0.05, s.name);
       if (win) {
         const loot = target.foodStore * 0.4, gold = target.wealth * 0.35;
         const wood = target.woodStore * 0.25, stone = target.stoneStore * 0.22;
@@ -2147,9 +2508,11 @@ class Simulation {
     }
   }
 
-  raidCasualties(s, frac) {
+  raidCasualties(s, frac, byName = null) {
     for (const a of this.agents) {
-      if (!a.dead && a.home === s.id && this.rand() < frac) this.killAgent(a, 'raid');
+      if (!a.dead && a.home === s.id && this.rand() < frac) {
+        this.killAgent(a, 'raid', byName ? `raiders of ${byName}` : null);
+      }
     }
   }
 
@@ -2170,7 +2533,10 @@ class Simulation {
             if (this.rand() < 0.5) break;
           }
         }
-        if (seeded && s.sickCount < 2) this.addEvent(`Sickness spreads in ${s.name}`, 'bad');
+        if (seeded && s.sickCount < 2) {
+          this.addEvent(`Sickness spreads in ${s.name}`, 'bad', '☣️');
+          this.iconFlash(s.x, s.y, '☣️', 80);
+        }
       }
     }
     // contact spread via the spatial grid
@@ -2206,8 +2572,10 @@ class Simulation {
       else { x = this.rand() * w.w; y = this.rand() * w.h; }
     }
     const R = kind === 'drought' ? 16 : kind === 'wildfire' ? 11 : 9;
+    const DISASTER_ICONS = { drought: '☀️', flood: '🌊', earthquake: '🌋', wildfire: '🔥', plague: '☣️' };
     this.flashes.push({ x, y, ttl: 90, kind: 'disaster', label: kind, r: R });
-    this.addEvent(`⚠ ${kind.toUpperCase()} strikes near (${x | 0},${y | 0})`, 'disaster');
+    this.iconFlash(x, y, DISASTER_ICONS[kind] || '⚠️', 90);
+    this.addEvent(`⚠ ${kind.toUpperCase()} strikes near (${x | 0},${y | 0})`, 'disaster', DISASTER_ICONS[kind] || '⚠️');
 
     const inRange = (i) => {
       const tx = i % w.w, ty = (i / w.w) | 0;
@@ -2268,7 +2636,7 @@ class Simulation {
       w.water[i] = Math.max(0, w.water[i] - 18);
     }
     for (const s of this.settlements) if (!s.dead) this.markSettlementShock(s, 'drought');
-    this.addEvent('⚠ CONTINENTAL DROUGHT — food and water crash', 'disaster');
+    this.addEvent('⚠ CONTINENTAL DROUGHT — food and water crash', 'disaster', '☀️');
   }
 
   /** UI: rain of plenty — resources surge back. */
@@ -2279,16 +2647,18 @@ class Simulation {
       w.water[i] = Math.min(100, w.water[i] + 15);
     }
     for (const s of this.settlements) if (!s.dead) s.foodStore += 25;
-    this.addEvent('✦ A season of plenty — resources surge', 'good');
+    this.addEvent('✦ A season of plenty — resources surge', 'good', '✨');
   }
 
-  /** UI: migration pressure — degrade a populated region so people move. */
-  triggerMigrationPressure() {
+  /** UI: migration pressure — degrade a region so people move (targetable). */
+  triggerMigrationPressure(atX, atY) {
     const live = this.settlements.filter(s => !s.dead);
     const w = this.world;
-    let x, y;
-    if (live.length) { const s = pick(this.rand, live); x = s.x; y = s.y; }
-    else { x = w.w / 2; y = w.h / 2; }
+    let x = atX, y = atY;
+    if (x === undefined) {
+      if (live.length) { const s = pick(this.rand, live); x = s.x; y = s.y; }
+      else { x = w.w / 2; y = w.h / 2; }
+    }
     for (let i = 0; i < w.food.length; i++) {
       const tx = i % w.w, ty = (i / w.w) | 0;
       if (dist2(tx, ty, x, y) < 300) {
@@ -2305,7 +2675,7 @@ class Simulation {
         if (this.rand() < 0.5) { a.state = 'migrating'; a.stateT = 0; a.hasTarget = false; }
       }
     }
-    this.addEvent('⚠ Migration pressure — a region turns hostile', 'disaster');
+    this.addEvent('⚠ Migration pressure — a region turns hostile', 'disaster', '👣');
   }
 
   // =========================================================================
@@ -2828,6 +3198,18 @@ class Renderer {
       }
     }
 
+    // --- gravestones: the dead rest where they fell (clickable) ---
+    if (v.scale > 3 && sim.graves && sim.graves.length) {
+      for (const gr of sim.graves) {
+        ctx.fillStyle = 'rgba(206, 212, 224, 0.88)';
+        ctx.fillRect(gr.x - 0.14, gr.y - 0.26, 0.28, 0.3);
+        ctx.beginPath(); ctx.arc(gr.x, gr.y - 0.26, 0.14, Math.PI, 0); ctx.fill();
+        ctx.fillStyle = 'rgba(82, 88, 104, 0.95)';
+        ctx.fillRect(gr.x - 0.025, gr.y - 0.24, 0.05, 0.15);
+        ctx.fillRect(gr.x - 0.07, gr.y - 0.2, 0.14, 0.045);
+      }
+    }
+
     // --- agents: tiny glowing dots, colored by home settlement ---
     const rA = clamp(0.14 + v.scale * 0.006, 0.12, 0.32);
     for (const a of sim.agents) {
@@ -2844,7 +3226,7 @@ class Renderer {
       const ax = a.px !== undefined ? a.px + (a.x - a.px) * alpha : a.x;
       const ay = a.py !== undefined ? a.py + (a.y - a.py) * alpha : a.y;
       ctx.beginPath();
-      ctx.arc(ax, ay, rA, 0, 6.283);
+      ctx.arc(ax, ay, a.age < 14 ? rA * 0.6 : rA, 0, 6.283); // children are smaller
       ctx.fill();
     }
 
@@ -2927,6 +3309,9 @@ class Renderer {
       } else if (this.selected.type === 'ruin') {
         const r = sim.ruins?.find((ruin) => ruin.id === this.selected.id);
         if (r) { sx = r.x; sy = r.y; sr = 1.3; }
+      } else if (this.selected.type === 'grave') {
+        const gr = sim.graves?.find((g) => g.id === this.selected.id);
+        if (gr) { sx = gr.x; sy = gr.y - 0.1; sr = 0.55; }
       }
       if (sx !== undefined) {
         const pulse = 0.15 + Math.sin(performance.now() / 220) * 0.08;
@@ -2965,6 +3350,23 @@ class Renderer {
       ctx.restore();
     }
 
+    // --- event icons: emoji floating up over cities (war, trade, plague…) ---
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const f of sim.flashes) {
+      if (f.kind !== 'icon') continue;
+      const life = f.ttl0 || 70;
+      const t = 1 - f.ttl / life;
+      const [sx, sy] = this.worldToScreen(f.x, f.y);
+      if (sx < -40 || sy < -40 || sx > W + 40 || sy > H + 40) continue;
+      ctx.font = '22px "Segoe UI Emoji", "Segoe UI Symbol", sans-serif';
+      ctx.globalAlpha = Math.max(0, Math.min(1, (1 - t) * 2.2));
+      ctx.fillText(f.char, sx, sy - 22 - t * 18);
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
     if (cityLabels.length) {
       ctx.save();
       ctx.font = '600 13px "Segoe UI", sans-serif';
@@ -2997,12 +3399,23 @@ class Renderer {
       }
     }
     if (bestR) return { type: 'ruin', id: bestR.id };
+    // gravestones: small, so use a screen-space hit radius
+    let bestG = null, bestGPx = 12;
+    if (sim.graves) {
+      for (const gr of sim.graves) {
+        const [gx, gy] = this.worldToScreen(gr.x, gr.y);
+        const d = Math.hypot(gx - px, gy - py);
+        if (d < bestGPx) { bestGPx = d; bestG = gr; }
+      }
+    }
     let bestA = null, bestD = 1.6;
     for (const a of sim.agents) {
       if (a.dead) continue;
       const d = Math.hypot(a.x - wx, a.y - wy);
       if (d < bestD) { bestD = d; bestA = a; }
     }
+    if (bestA && bestD < 0.35 && bestG) return { type: 'agent', id: bestA.id };
+    if (bestG) return { type: 'grave', id: bestG.id };
     if (bestA && bestD < 0.9) return { type: 'agent', id: bestA.id };
     let bestS = null, bestSD = 99;
     for (const s of sim.settlements) {
@@ -3121,8 +3534,14 @@ function Slider({ label, value, min, max, step, onChange, fmt }) {
 function Controls({
   params, setParam, seed, setSeed, worldSize, setWorldSize,
   onRestart, overlay, setOverlay, showRoutes, setShowRoutes,
-  showTrails, setShowTrails, godAction, stressMode, setStressMode
+  showTrails, setShowTrails, godAction, armedGod, stressMode, setStressMode
 }) {
+  // targetable calamities arm a click-to-strike mode on the map
+  const god = (kind, icon, label, targetable = true) => h('button', {
+    className: 'danger' + (armedGod === kind ? ' on' : ''),
+    title: targetable ? 'Arms targeting — then click the map where it should strike' : undefined,
+    onClick: () => godAction(kind)
+  }, `${icon} ${label}${armedGod === kind ? ' ◎' : ''}`);
   return h('div', { className: 'sidebar' },
     h('div', { className: 'section' },
       h('h3', null, 'World Genesis ',
@@ -3159,15 +3578,18 @@ function Controls({
     h('div', { className: 'section' },
       h('h3', null, 'God Tools'),
       h('div', { className: 'btn-grid' },
-        h('button', { className: 'danger', onClick: () => godAction('drought') }, '🔥 Drought'),
-        h('button', { className: 'danger', onClick: () => godAction('plague') }, '☣ Plague'),
-        h('button', { className: 'danger', onClick: () => godAction('earthquake') }, '🌋 Earthquake'),
-        h('button', { className: 'danger', onClick: () => godAction('wildfire') }, '🌲 Wildfire'),
-        h('button', { className: 'danger', onClick: () => godAction('flood') }, '🌊 Flood'),
-        h('button', { className: 'danger', onClick: () => godAction('globalDrought') }, '☀ Global drought'),
-        h('button', { onClick: () => godAction('addResources') }, '✦ Add resources'),
-        h('button', { onClick: () => godAction('migration') }, '👣 Migration push')
-      )
+        god('drought', '☀', 'Drought'),
+        god('plague', '☣', 'Plague'),
+        god('earthquake', '🌋', 'Earthquake'),
+        god('wildfire', '🔥', 'Wildfire'),
+        god('flood', '🌊', 'Flood'),
+        god('migration', '👣', 'Migration push'),
+        h('button', { className: 'danger', onClick: () => godAction('globalDrought') }, '🌍 Global drought'),
+        h('button', { onClick: () => godAction('addResources') }, '✦ Add resources')
+      ),
+      h('div', { style: { fontSize: 10, color: 'var(--text-dim)', marginTop: 6 } },
+        armedGod ? 'Click the map to strike. Esc / right-click to cancel.'
+                 : 'Calamities arm a targeting cursor — you choose where they land.')
     ),
 
     h('div', { className: 'section' },
@@ -3281,8 +3703,9 @@ function Inspector({ data, onClose }) {
   if (data.type === 'agent') {
     const a = data;
     return h('div', { className: 'inspector' },
-      h('h4', null, `◉ Agent #${a.id} `, h('button', { onClick: onClose }, '✕')),
-      h('div', { className: 'sub' }, `${a.stateLabel} · age ${a.age} · ${a.homeName}`),
+      h('h4', null, `${a.sex === 'F' ? '♀' : '♂'} ${a.name} `, h('button', { onClick: onClose }, '✕')),
+      h('div', { className: 'sub' },
+        `${a.stateLabel}${a.pregnant ? ' · 🤰 expecting' : ''} · age ${a.age} · ${a.homeName}`),
       h(KV, { k: 'Health', v: a.health }), h(Bar, { v: a.health, color: a.health > 50 ? 'var(--good)' : 'var(--bad)' }),
       h(KV, { k: 'Hunger', v: a.hunger }), h(Bar, { v: a.hunger, color: a.hunger > 60 ? 'var(--bad)' : 'var(--warn)' }),
       h(KV, { k: 'Thirst', v: a.thirst }), h(Bar, { v: a.thirst, color: '#7dd3fc' }),
@@ -3290,7 +3713,9 @@ function Inspector({ data, onClose }) {
       h(KV, { k: 'Fear', v: a.fear }), h(Bar, { v: a.fear, color: '#fb7185' }),
       h(KV, { k: 'Sick', v: a.sick ? 'YES' : 'no' }),
       h(KV, { k: 'Inventory', v: `🍖${a.food} 🪵${a.wood} 💰${a.wealth}` }),
-      h(KV, { k: 'Partner', v: a.partner }),
+      h(KV, { k: 'Spouse', v: a.spouseName }),
+      h(KV, { k: 'Children', v: a.childrenLabel }),
+      h(KV, { k: 'Parents', v: a.parents }),
       h(KV, { k: 'Relationships', v: `${a.friends} friends · ${a.enemies} rivals` }),
       h('div', { style: { margin: '7px 0 3px' } },
         a.traits.map((t) => h('span', { key: t, className: 'tag' }, t))),
@@ -3303,6 +3728,18 @@ function Inspector({ data, onClose }) {
         h('div', { className: 'kv' }, h('span', { className: 'k' }, 'Recent memory')),
         a.memory.map((m, i) => h('div', { key: i, className: 'mem' }, `“${m}”`))
       ) : null
+    );
+  }
+
+  if (data.type === 'grave') {
+    const g = data;
+    return h('div', { className: 'inspector' },
+      h('h4', null, `🪦 ${g.name} `, h('button', { onClick: onClose }, '✕')),
+      h('div', { className: 'sub' }, `${g.sex === 'F' ? '♀' : '♂'} died Year ${g.year}, aged ${g.age}`),
+      h(KV, { k: 'Cause of death', v: g.cause }),
+      g.killer ? h(KV, { k: 'Slain by', v: g.killer }) : null,
+      h('div', { className: 'mem', style: { marginTop: 8 } },
+        g.killer ? `${g.name} was killed by ${g.killer}.` : `Here lies ${g.name}, taken by ${g.cause}.`)
     );
   }
 
@@ -3351,7 +3788,69 @@ function Inspector({ data, onClose }) {
   );
 }
 
+// ========== src/ui/Timeline.js ==========
+
+
+
+const WINDOW_YEARS = 80; // how much history stays visible before sliding off
+
+/**
+ * "Birds on a wire" timeline. Milestones (wars, foundings, collapses,
+ * discoveries, plagues, disasters) perch as emoji on a horizontal wire that
+ * slides left as the years pass; click one for a summary bubble. Mostly
+ * static — new events appear at the right edge and drift off the left.
+ */
+function Timeline({ milestones, tick, ticksPerYear }) {
+  const [popup, setPopup] = useState(null);
+
+  const now = tick / ticksPerYear;
+  const t0 = Math.max(0, now - WINDOW_YEARS);
+  const span = Math.max(1, now - t0);
+  const xOf = (yr) => `${((yr - t0) / span) * 96 + 2}%`;
+
+  // decade gridlines
+  const decades = [];
+  for (let y = Math.ceil(t0 / 10) * 10; y <= now; y += 10) decades.push(y);
+
+  const visible = [];
+  for (let i = milestones.length - 1; i >= 0 && visible.length < 90; i--) {
+    const m = milestones[i];
+    if (m.tick / ticksPerYear < t0) break;
+    visible.push(m);
+  }
+  visible.reverse();
+
+  return h('div', { className: 'timeline' },
+    h('div', { className: 'tl-title' }, 'CHRONICLE · last ' + Math.round(span) + ' years'),
+    h('div', { className: 'wire' }),
+    decades.map((y) => h('div', { key: 'y' + y, className: 'yearmark', style: { left: xOf(y) } },
+      h('div', { className: 'tickline' }),
+      h('span', null, 'Y' + y)
+    )),
+    visible.map((m, i) => h('button', {
+      key: m.tick + '-' + i,
+      className: 'milestone' + (i % 2 ? ' row1' : ''),
+      style: { left: xOf(m.tick / ticksPerYear) },
+      title: `Y${m.year} — ${m.text}`,
+      onClick: (e) => {
+        e.stopPropagation();
+        setPopup(popup && popup.m === m ? null : { m, x: e.currentTarget.offsetLeft });
+      }
+    }, m.icon)),
+    h('div', { className: 'tl-now' }, 'Y' + (now | 0)),
+    popup ? h('div', {
+      className: 'tl-popup',
+      style: { left: Math.max(120, Math.min(popup.x, 99999)) }
+    },
+      h('b', null, `Y${popup.m.year} `),
+      `${popup.m.icon} ${popup.m.text}`,
+      h('button', { className: 'tiny', style: { marginLeft: 8 }, onClick: () => setPopup(null) }, '✕')
+    ) : null
+  );
+}
+
 // ========== src/App.js ==========
+
 
 
 
@@ -3389,10 +3888,14 @@ function App() {
   const [showRoutes, setShowRoutesState] = useState(false);
   const [showTrails, setShowTrailsState] = useState(true);
   const [, setSelection] = useState(null);
-  const [ui, setUi] = useState({ stats: {}, events: [], history: emptyHistory(), fps: 0, tps: 0, inspector: null });
+  const [armedGod, setArmedGod] = useState(null); // calamity awaiting a map click
+  const [panel, setPanel] = useState(null); // mobile drawer: null | 'controls' | 'stats'
+  const armedGodRef = useRef(null);
+  const [ui, setUi] = useState({ stats: {}, events: [], history: emptyHistory(), milestones: [], fps: 0, tps: 0, inspector: null });
 
   runningRef.current = running;
   speedRef.current = SPEEDS[speedIdx];
+  armedGodRef.current = armedGod;
 
   // ---- engine bootstrap + master loop (mounted once) ----------------------
   useEffect(() => {
@@ -3454,6 +3957,7 @@ function App() {
           stats: s.stats,
           events: s.events.slice(),
           history: s.history,
+          milestones: s.milestones,
           fps, tps,
           inspector: buildInspector(s, renderer.selected)
         });
@@ -3476,6 +3980,7 @@ function App() {
     rendererRef.current.attach(sim);
     rendererRef.current.selected = null;
     setSelection(null);
+    setPanel(null);
   }, [params, seed, worldSize, stressMode]);
 
   // live parameter changes flow straight into the running engine
@@ -3492,22 +3997,53 @@ function App() {
   const setShowRoutes = (v) => { setShowRoutesState(v); if (rendererRef.current) rendererRef.current.showRoutes = v; };
   const setShowTrails = (v) => { setShowTrailsState(v); if (rendererRef.current) rendererRef.current.showTrails = v; };
 
+  // targetable calamities arm the cursor; the next map click strikes there
+  const TARGETABLE = ['drought', 'plague', 'earthquake', 'wildfire', 'flood', 'migration'];
   const godAction = (kind) => {
     const s = simRef.current;
     if (!s) return;
     if (kind === 'globalDrought') s.forceDrought();
     else if (kind === 'addResources') s.addResources();
-    else if (kind === 'migration') s.triggerMigrationPressure();
-    else s.spawnDisaster(kind);
+    else if (TARGETABLE.includes(kind)) {
+      setArmedGod((cur) => (cur === kind ? null : kind));
+      setPanel(null); // slide the drawer away so the map can be tapped
+    }
   };
 
-  // ---- canvas interaction: drag = pan, wheel = zoom, click = inspect ------
+  // ---- canvas interaction: drag/touch = pan, wheel/pinch = zoom, tap = inspect
   useEffect(() => {
     const canvas = canvasRef.current;
     let dragging = false, moved = false, lx = 0, ly = 0;
+    const pointers = new Map(); // active pointers → pinch support on touch
+    let pinchDist = 0;
 
-    const down = (e) => { dragging = true; moved = false; lx = e.clientX; ly = e.clientY; };
+    const down = (e) => {
+      canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 1) {
+        dragging = true; moved = false; lx = e.clientX; ly = e.clientY;
+      } else if (pointers.size === 2) {
+        // second finger down: switch from pan to pinch
+        dragging = false; moved = true;
+        const [p1, p2] = [...pointers.values()];
+        pinchDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+      }
+    };
     const move = (e) => {
+      if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2) {
+        // pinch: zoom toward the midpoint of the two fingers
+        const [p1, p2] = [...pointers.values()];
+        const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        if (pinchDist > 0 && d > 0) {
+          const rect = canvas.getBoundingClientRect();
+          const mx = (p1.x + p2.x) / 2 - rect.left;
+          const my = (p1.y + p2.y) / 2 - rect.top;
+          rendererRef.current.zoomAt(mx, my, d / pinchDist);
+        }
+        pinchDist = d;
+        return;
+      }
       if (!dragging) return;
       const dx = e.clientX - lx, dy = e.clientY - ly;
       if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
@@ -3515,30 +4051,57 @@ function App() {
       lx = e.clientX; ly = e.clientY;
     };
     const up = (e) => {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinchDist = 0;
       if (dragging && !moved) {
         const rect = canvas.getBoundingClientRect();
-        const hit = rendererRef.current.pickAt(e.clientX - rect.left, e.clientY - rect.top);
-        rendererRef.current.selected = hit;
-        setSelection(hit);
+        if (armedGodRef.current) {
+          // a calamity is armed: this click chooses where it strikes
+          const [wx, wy] = rendererRef.current.screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+          const s = simRef.current;
+          const kind = armedGodRef.current;
+          if (s) {
+            if (kind === 'migration') s.triggerMigrationPressure(wx, wy);
+            else s.spawnDisaster(kind, wx, wy);
+          }
+          setArmedGod(null);
+        } else {
+          const hit = rendererRef.current.pickAt(e.clientX - rect.left, e.clientY - rect.top);
+          rendererRef.current.selected = hit;
+          setSelection(hit);
+        }
       }
       dragging = false;
     };
+    const cancelCtx = (e) => { e.preventDefault(); setArmedGod(null); };
+    const cancelKey = (e) => { if (e.key === 'Escape') setArmedGod(null); };
+    canvas.addEventListener('contextmenu', cancelCtx);
+    window.addEventListener('keydown', cancelKey);
     const wheel = (e) => {
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
       rendererRef.current.zoomAt(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.15 : 0.87);
     };
+    const cancel = (e) => { pointers.delete(e.pointerId); if (pointers.size < 2) pinchDist = 0; dragging = false; };
     canvas.addEventListener('pointerdown', down);
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
     canvas.addEventListener('wheel', wheel, { passive: false });
     return () => {
       canvas.removeEventListener('pointerdown', down);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       canvas.removeEventListener('wheel', wheel);
+      window.removeEventListener('pointercancel', cancel);
+      canvas.removeEventListener('contextmenu', cancelCtx);
+      window.removeEventListener('keydown', cancelKey);
     };
   }, []);
+
+  useEffect(() => {
+    if (canvasRef.current) canvasRef.current.style.cursor = armedGod ? 'crosshair' : '';
+  }, [armedGod]);
 
   const clearSelection = () => { setSelection(null); if (rendererRef.current) rendererRef.current.selected = null; };
   const st = ui.stats || {};
@@ -3548,6 +4111,10 @@ function App() {
 
   return h('div', { className: 'app' },
     h('div', { className: 'topbar' },
+      h('button', {
+        className: 'mobile-only' + (panel === 'controls' ? ' on' : ''),
+        onClick: () => setPanel(panel === 'controls' ? null : 'controls')
+      }, '☰'),
       h('h1', null, '⬡ HUMAN CIVILIZATION EMERGENCE SIMULATOR'),
       h('button', { className: 'primary', onClick: () => setRunning(!running) }, running ? '❚❚ Pause' : '▶ Play'),
       h('div', { style: { display: 'flex', gap: 4 } },
@@ -3560,21 +4127,28 @@ function App() {
       h('button', { onClick: restart }, '⟲ Restart'),
       h('div', { className: 'spacer' }),
       h('span', { className: 'chip' }, 'Year ', h('b', null, st.year ?? 0)),
-      h('span', { className: 'chip' }, 'Tick ', h('b', null, st.tick ?? 0)),
+      h('span', { className: 'chip hide-sm' }, 'Tick ', h('b', null, st.tick ?? 0)),
       h('span', { className: 'chip' }, 'Pop ', h('b', null, st.population ?? 0)),
-      h('span', { className: 'chip' }, h('b', null, ui.fps), ' fps · ', h('b', null, ui.tps), ' tps')
+      h('span', { className: 'chip hide-sm' }, h('b', null, ui.fps), ' fps · ', h('b', null, ui.tps), ' tps'),
+      h('button', {
+        className: 'mobile-only' + (panel === 'stats' ? ' on' : ''),
+        onClick: () => setPanel(panel === 'stats' ? null : 'stats')
+      }, '📊')
     ),
 
-    h('div', { className: 'main' },
+    h('div', {
+      className: 'main' + (panel === 'controls' ? ' show-left' : panel === 'stats' ? ' show-right' : '')
+    },
+      panel ? h('div', { className: 'drawer-backdrop', onClick: () => setPanel(null) }) : null,
       h(Controls, {
         params, setParam, seed, setSeed, worldSize, setWorldSize,
         onRestart: restart, overlay, setOverlay,
         showRoutes, setShowRoutes, showTrails, setShowTrails,
-        godAction, stressMode, setStressMode
+        godAction, armedGod, stressMode, setStressMode
       }),
 
       h('div', { className: 'map-area' },
-        h('canvas', { ref: canvasRef }),
+        h('canvas', { ref: canvasRef, style: { touchAction: 'none' } }),
         h('div', { className: 'legend' },
           legendRow('#1d4e7a', 'Water'),
           legendRow('#607a46', 'Plains'),
@@ -3592,6 +4166,9 @@ function App() {
             ? h('div', { className: 'row', style: { marginTop: 4, color: 'var(--accent)' } }, 'Overlay: ' + overlay)
             : null
         ),
+        armedGod ? h('div', { className: 'god-banner' },
+          `☄ Click the map to unleash ${armedGod.toUpperCase()} — Esc or right-click to cancel`) : null,
+        h(Timeline, { milestones: ui.milestones || [], tick: st.tick || 0, ticksPerYear: TICKS_PER_YEAR }),
         h(Inspector, { data: ui.inspector, onClose: clearSelection })
       ),
 
@@ -3621,16 +4198,33 @@ function buildInspector(sim, sel) {
       .map(([k, v]) => `${k} ${(v * 100) | 0}%`);
     let friends = 0, enemies = 0;
     for (const v of a.rel.values()) { if (v > 0.3) friends++; else if (v < -0.3) enemies++; }
+    const spouse = a.spouse >= 0 ? sim.agentById.get(a.spouse) : null;
+    const mother = a.mother >= 0 ? sim.agentById.get(a.mother) : null;
+    const father = a.father >= 0 ? sim.agentById.get(a.father) : null;
+    let kidsAlive = 0;
+    for (const cid of a.children) if (sim.agentById.get(cid)) kidsAlive++;
     return {
       type: 'agent', id: a.id,
+      name: `${a.firstName} ${a.lastName}`,
+      sex: a.sex,
+      pregnant: !!a.pregnant,
       stateLabel: a.state, age: a.age | 0,
       homeName: home ? `of ${home.name}` : 'nomad',
       health: a.health | 0, hunger: a.hunger | 0, thirst: a.thirst | 0,
       energy: a.energy | 0, fear: a.fear | 0, sick: a.sick,
       food: a.inv.food.toFixed(1), wood: a.inv.wood.toFixed(1), wealth: a.inv.wealth.toFixed(1),
-      partner: a.partner >= 0 ? `#${a.partner}` : '—',
+      spouseName: spouse ? `${spouse.firstName} ${spouse.lastName}` : (a.spouse >= 0 ? 'widowed' : '—'),
+      childrenLabel: a.children.length ? `${kidsAlive} living of ${a.children.length}` : '—',
+      parents: (mother || father)
+        ? `${mother ? mother.firstName : '†'} & ${father ? father.firstName : '†'}`
+        : (a.mother >= 0 || a.father >= 0 ? 'deceased' : 'unknown'),
       friends, enemies, traits, skills, memory: a.memory.slice(-4)
     };
+  }
+  if (sel.type === 'grave') {
+    const gr = sim.graves.find((g) => g.id === sel.id);
+    if (!gr) return null;
+    return { type: 'grave', ...gr };
   }
   if (sel.type === 'ruin') {
     const r = sim.ruins?.find((ruin) => ruin.id === sel.id);

@@ -337,6 +337,18 @@ export class Renderer {
       }
     }
 
+    // --- gravestones: the dead rest where they fell (clickable) ---
+    if (v.scale > 3 && sim.graves && sim.graves.length) {
+      for (const gr of sim.graves) {
+        ctx.fillStyle = 'rgba(206, 212, 224, 0.88)';
+        ctx.fillRect(gr.x - 0.14, gr.y - 0.26, 0.28, 0.3);
+        ctx.beginPath(); ctx.arc(gr.x, gr.y - 0.26, 0.14, Math.PI, 0); ctx.fill();
+        ctx.fillStyle = 'rgba(82, 88, 104, 0.95)';
+        ctx.fillRect(gr.x - 0.025, gr.y - 0.24, 0.05, 0.15);
+        ctx.fillRect(gr.x - 0.07, gr.y - 0.2, 0.14, 0.045);
+      }
+    }
+
     // --- agents: tiny glowing dots, colored by home settlement ---
     const rA = clamp(0.14 + v.scale * 0.006, 0.12, 0.32);
     for (const a of sim.agents) {
@@ -353,7 +365,7 @@ export class Renderer {
       const ax = a.px !== undefined ? a.px + (a.x - a.px) * alpha : a.x;
       const ay = a.py !== undefined ? a.py + (a.y - a.py) * alpha : a.y;
       ctx.beginPath();
-      ctx.arc(ax, ay, rA, 0, 6.283);
+      ctx.arc(ax, ay, a.age < 14 ? rA * 0.6 : rA, 0, 6.283); // children are smaller
       ctx.fill();
     }
 
@@ -436,6 +448,9 @@ export class Renderer {
       } else if (this.selected.type === 'ruin') {
         const r = sim.ruins?.find((ruin) => ruin.id === this.selected.id);
         if (r) { sx = r.x; sy = r.y; sr = 1.3; }
+      } else if (this.selected.type === 'grave') {
+        const gr = sim.graves?.find((g) => g.id === this.selected.id);
+        if (gr) { sx = gr.x; sy = gr.y - 0.1; sr = 0.55; }
       }
       if (sx !== undefined) {
         const pulse = 0.15 + Math.sin(performance.now() / 220) * 0.08;
@@ -474,6 +489,23 @@ export class Renderer {
       ctx.restore();
     }
 
+    // --- event icons: emoji floating up over cities (war, trade, plague…) ---
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const f of sim.flashes) {
+      if (f.kind !== 'icon') continue;
+      const life = f.ttl0 || 70;
+      const t = 1 - f.ttl / life;
+      const [sx, sy] = this.worldToScreen(f.x, f.y);
+      if (sx < -40 || sy < -40 || sx > W + 40 || sy > H + 40) continue;
+      ctx.font = '22px "Segoe UI Emoji", "Segoe UI Symbol", sans-serif';
+      ctx.globalAlpha = Math.max(0, Math.min(1, (1 - t) * 2.2));
+      ctx.fillText(f.char, sx, sy - 22 - t * 18);
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
     if (cityLabels.length) {
       ctx.save();
       ctx.font = '600 13px "Segoe UI", sans-serif';
@@ -506,12 +538,23 @@ export class Renderer {
       }
     }
     if (bestR) return { type: 'ruin', id: bestR.id };
+    // gravestones: small, so use a screen-space hit radius
+    let bestG = null, bestGPx = 12;
+    if (sim.graves) {
+      for (const gr of sim.graves) {
+        const [gx, gy] = this.worldToScreen(gr.x, gr.y);
+        const d = Math.hypot(gx - px, gy - py);
+        if (d < bestGPx) { bestGPx = d; bestG = gr; }
+      }
+    }
     let bestA = null, bestD = 1.6;
     for (const a of sim.agents) {
       if (a.dead) continue;
       const d = Math.hypot(a.x - wx, a.y - wy);
       if (d < bestD) { bestD = d; bestA = a; }
     }
+    if (bestA && bestD < 0.35 && bestG) return { type: 'agent', id: bestA.id };
+    if (bestG) return { type: 'grave', id: bestG.id };
     if (bestA && bestD < 0.9) return { type: 'agent', id: bestA.id };
     let bestS = null, bestSD = 99;
     for (const s of sim.settlements) {
