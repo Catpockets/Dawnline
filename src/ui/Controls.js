@@ -4,7 +4,17 @@ const h = React.createElement;
 
 const OVERLAYS = [
   'none', 'food', 'water', 'fertility', 'density', 'influence',
-  'trade', 'conflict', 'disease', 'tech', 'wealth', 'culture'
+  'trade', 'conflict', 'disease', 'tech', 'wealth', 'culture',
+  'ideology', 'resources', 'food-signal', 'danger-signal', 'migration'
+];
+
+// live-toggleable AI subsystems (the tech-demo switchboard)
+const AI_TOGGLES = [
+  ['enableLearning', 'Per-agent learning'],
+  ['enableSocialLearning', 'Social learning'],
+  ['enableIdeology', 'Ideology system'],
+  ['enableSignals', 'Environmental signals'],
+  ['enableColonies', 'Colony founding']
 ];
 
 const WORLD_SIZES = [
@@ -88,6 +98,18 @@ export default function Controls({
       h('div', { style: { fontSize: 10, color: 'var(--text-dim)', marginTop: 6 } },
         armedGod ? 'Click the map to strike. Esc / right-click to cancel.'
                  : 'Calamities arm a targeting cursor — you choose where they land.')
+    ),
+
+    h('div', { className: 'section' },
+      h('h3', null, 'AI Systems'),
+      AI_TOGGLES.map(([key, label]) => h('button', {
+        key,
+        className: 'tiny' + (params[key] !== false ? ' on' : ''),
+        style: { width: '100%', marginBottom: 5, textAlign: 'left' },
+        onClick: () => setParam(key, params[key] === false)
+      }, `${params[key] !== false ? '●' : '○'} ${label}`)),
+      h('div', { style: { fontSize: 10, color: 'var(--text-dim)' } },
+        'Toggle live to A/B the emergent behaviour. Always deterministic per seed.')
     ),
 
     h('div', { className: 'section' },

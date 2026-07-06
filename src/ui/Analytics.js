@@ -1,5 +1,6 @@
 import React from 'react';
 import MiniChart from './MiniChart.js';
+import AgentSearchPanel from './AgentSearchPanel.js';
 
 const h = React.createElement;
 
@@ -15,12 +16,13 @@ function Stat({ k, v, cls = '' }) {
  * All values come from the periodic engine snapshot — nothing here touches
  * the simulation directly.
  */
-export default function Analytics({ stats, history, events }) {
+export default function Analytics({ stats, history, events, onSearch, onPick }) {
   const s = stats || {};
   const fmt1 = (v) => (v === undefined ? '—' : (+v).toFixed(1));
   const pct = (v) => (v === undefined ? '—' : Math.round(v * 100) + '%');
 
   return h('div', { className: 'sidebar right' },
+    h(AgentSearchPanel, { onSearch, onPick }),
     h('div', { className: 'section' },
       h('h3', null, 'Civilization Analytics'),
       h('div', { className: 'stat-grid' },
@@ -43,9 +45,24 @@ export default function Analytics({ stats, history, events }) {
           k: 'Climate Δtemp',
           v: s.tempOffset !== undefined ? (s.tempOffset > 0 ? '+' : '') + s.tempOffset.toFixed(3) : '—',
           cls: s.tempOffset > 0.12 ? 'warn' : ''
-        })
+        }),
+        h(Stat, { k: 'Marriages', v: s.marriages ?? 0 }),
+        h(Stat, { k: 'Colonies', v: s.colonies ?? 0 }),
+        h(Stat, { k: 'Orphans', v: `${s.orphans ?? 0} / ${s.children ?? 0}`, cls: s.orphans > 3 ? 'warn' : '' }),
+        h(Stat, { k: 'Avg AI reward', v: s.avgReward !== undefined ? s.avgReward.toFixed(2) : '—', cls: s.avgReward < 0 ? 'warn' : '' })
       )
     ),
+
+    (s.ideologies && s.ideologies.length) ? h('div', { className: 'section' },
+      h('h3', null, `Ideologies (${s.conversions ?? 0} conversions)`),
+      s.ideologies.map((I) => h('div', { key: I.id, className: 'ideo-row' },
+        h('div', { className: 'ideo-dot', style: { background: `hsl(${I.hue}, 80%, 60%)`, color: `hsl(${I.hue}, 80%, 60%)` } }),
+        h('span', { className: 'nm' }, I.name),
+        h('span', { className: 'meta' },
+          `${I.type}${I.parent ? ' (schism)' : ''}`, h('br'),
+          `${I.followers} souls · zeal ${(I.zeal * 100) | 0}% · tol ${(I.tolerance * 100) | 0}%`)
+      ))
+    ) : null,
 
     h('div', { className: 'section' },
       h('h3', null, 'Time Series'),

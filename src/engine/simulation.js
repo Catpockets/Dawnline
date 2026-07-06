@@ -12,6 +12,9 @@ import {
   createSettlement, updateSettlement, contributeBuild as buildContribute,
   cultureShift, dominantCulture, classifySettlement
 } from './settlements.js';
+import { createIdeology, ideologyConflict, tryConvert } from './ideologies.js';
+import { learnReward } from './learning.js';
+
 
 export const DEFAULT_PARAMS = {
   seed: 'genesis-42',
@@ -75,8 +78,18 @@ export class Simulation {
     this.routes = new Map();        // "aId-bId" -> {a, b, strength}
     this.tradeMap = new Float32Array(this.world.w * this.world.h);
     this.migrationMap = new Float32Array(this.world.w * this.world.h);
+    // stigmergy signal fields: agents deposit, decay+diffuse staggered
+    this.foodSignal = new Float32Array(this.world.w * this.world.h);
+    this.dangerSignal = new Float32Array(this.world.w * this.world.h);
+    this._signalScratch = new Float32Array(this.world.w * this.world.h);
+    // ideology registry (deterministically generated on demand)
+    this.ideologies = [];
+    this.ideologyById = new Map();
+    this.nextIdeologyId = 1;
+    this.nextFamilyId = 1;
+    this.debugAgentId = -1; // inspector target for AI-explain capture
     this.climate = { tempOffset: 0 };
-    this.totals = { births: 0, deaths: 0, deathsWindow: 0 };
+    this.totals = { births: 0, deaths: 0, deathsWindow: 0, marriages: 0, colonies: 0, conversions: 0, rewardSum: 0, rewardCount: 0 };
     this.stats = {};
     this.history = {
       pop: [], food: [], settlements: [], conflicts: [], disease: [],
@@ -138,9 +151,27 @@ export class Simulation {
       home: mom.home,
       mother: mom.id,
       father: father ? father.id : mom.spouse,
-      lastName: father ? father.lastName : mom.lastName
+      lastName: father ? father.lastName : mom.lastName,
+      familyId: father ? father.familyId : mom.familyId
     });
     baby.inv.food = 0;
+    // partial personality inheritance with mutation
+    const mix = (trait) => {
+      const mv = mom[trait], fv = father ? father[trait] : mv;
+      baby[trait] = clamp((mv + fv) / 2 + (this.rand() - 0.5) * 0.24, 0, 1);
+    };
+    for (const t of ['curiosity', 'aggression', 'sociability', 'greed', 'empathy', 'intelligence']) mix(t);
+    // skill TENDENCIES inherited weakly; actual ability starts near zero
+    for (const k of Object.keys(baby.skills)) {
+      const pk = ((mom.skills[k] || 0) + (father ? father.skills[k] || 0 : 0)) / 2;
+      baby.skills[k] = clamp(pk * 0.2 + baby.skills[k] * 0.15, 0.02, 0.4);
+    }
+    // ideology exposure from parents (children usually follow the family creed)
+    const creed = mom.ideology != null ? mom.ideology : (father ? father.ideology : null);
+    if (creed != null && this.rand() < 0.85) {
+      baby.ideology = creed;
+      baby.conviction = 0.3 + this.rand() * 0.3;
+    }
     this.addAgent(baby);
     this.totals.births++;
     mom.children.push(baby.id);
@@ -168,6 +199,15 @@ export class Simulation {
       tick: this.tick
     });
     if (this.graves.length > 350) this.graves.shift();
+    if (a.age < 12) {
+      // losing a child is the strongest negative parenting signal
+      for (const pid of [a.mother, a.father, a.guardian]) {
+        const p = pid >= 0 ? this.agentById.get(pid) : null;
+        if (p && !p.dead) learnReward(this, p, 'parenting', -1.4);
+      }
+      const dti = tileIndex(this.world, a.x, a.y);
+      this.dangerSignal[dti] = Math.min(6, this.dangerSignal[dti] + 2);
+    }
     if (a.spouse >= 0) {
       const p = this.agentById.get(a.spouse);
       if (p) { p.spouse = -1; remember(p, `mourned ${a.firstName}`); }
@@ -214,9 +254,22 @@ export class Simulation {
     }
     if (founders.length < 3) return;
     const s = createSettlement(this, a.x, a.y, founders.map(f => f.id));
+    s.parentSettlementId = null;
+    s.originReason = 'exploration';
+    s.foundedByAgentId = a.id;
     this.settlements.push(s);
     this.settlementById.set(s.id, s);
     for (const f of founders) { f.home = s.id; remember(f, `helped found ${s.name}`); }
+    learnReward(this, a, 'migrating', 1.2); // founding pays off
+    // frontier settlements sometimes birth a new creed
+    if (this.params.enableIdeology !== false && this.rand() < 0.3) {
+      const ideo = createIdeology(this, `${a.firstName} ${a.lastName}`);
+      if (ideo) {
+        s.foundingIdeologyId = ideo.id;
+        for (const f of founders) { f.ideology = ideo.id; f.conviction = 0.6; }
+        this.addEvent(`${ideo.name} (${ideo.type}) emerges in ${s.name}`, 'tech', '🕯️');
+      }
+    }
     this.addEvent(`${s.name} founded (${founders.length} settlers)`, 'good', '🏠');
     this.iconFlash(s.x, s.y, '🏠');
   }
@@ -327,8 +380,12 @@ export class Simulation {
     if (this.tick % 25 === 0) this.updateTradeAndDiplomacy();
     if (this.tick % 30 === 5) this.updateWar();
     if (this.tick % 12 === 0) this.updateDisease();
+    if (this.params.enableIdeology !== false && this.tick % 40 === 11) this.updateIdeologies();
+    if (this.params.enableIdeology !== false && this.tick % 200 === 77) this.checkSchisms();
+    if (this.params.enableColonies !== false && this.tick % 90 === 33) this.evaluateColonies();
     this.maybeDisaster();
     if (this.tick % 10 === 0) this.fadeMigrationMap();
+    if (this.params.enableSignals !== false && this.tick % 6 === 2) this.updateSignals();
 
     // fade transient visuals
     for (let i = this.flashes.length - 1; i >= 0; i--) {
@@ -410,6 +467,171 @@ export class Simulation {
     }
   }
 
+  // ---- stigmergy: decay + 4-neighbour diffusion, ~every 6 ticks --------
+  updateSignals() {
+    const w = this.world.w, h = this.world.h;
+    for (const field of [this.foodSignal, this.dangerSignal]) {
+      const tmp = this._signalScratch;
+      for (let i = 0; i < field.length; i++) tmp[i] = field[i];
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = y * w + x;
+          const v = tmp[i];
+          if (v < 0.01 && field[i] < 0.01) { field[i] = 0; continue; }
+          const L = x > 0 ? tmp[i - 1] : v, R = x < w - 1 ? tmp[i + 1] : v;
+          const U = y > 0 ? tmp[i - w] : v, D = y < h - 1 ? tmp[i + w] : v;
+          field[i] = (v + 0.12 * ((L + R + U + D) / 4 - v)) * 0.92;
+        }
+      }
+    }
+  }
+
+  // ---- ideology spread: family → spouse → settlement → drift ----------
+  updateIdeologies() {
+    // cache each settlement's dominant creed (single O(N) pass)
+    for (const s of this.settlements) { if (!s.dead) { s.ideologyMix = s.ideologyMix || new Map(); s.ideologyMix.clear(); } }
+    for (const a of this.agents) {
+      if (a.dead || a.home < 0 || a.ideology == null) continue;
+      const s = this.settlementById.get(a.home);
+      if (s && s.ideologyMix) s.ideologyMix.set(a.ideology, (s.ideologyMix.get(a.ideology) || 0) + 1);
+    }
+    for (const I of this.ideologies) I.followers = 0;
+    for (const a of this.agents) {
+      if (!a.dead && a.ideology != null) {
+        const I = this.ideologyById.get(a.ideology);
+        if (I) I.followers++;
+      }
+    }
+    for (const s of this.settlements) {
+      if (s.dead || !s.ideologyMix) continue;
+      let top = null, tn = 0;
+      for (const [id, n] of s.ideologyMix) if (n > tn) { tn = n; top = id; }
+      s.dominantIdeology = top;
+      // creed cohesion steadies a settlement; a split creed frays it
+      if (top != null && s.members > 6) {
+        const share = tn / s.members;
+        if (share > 0.7) s.stability = clamp(s.stability + 0.004, 0, 1);
+        else if (share < 0.4 && s.ideologyMix.size > 1) s.stability -= 0.003;
+      }
+    }
+    // conversions (staggered subset each pass)
+    let converted = 0;
+    for (const a of this.agents) {
+      if (a.dead || a.age < 8 || (this.tick + a.id) % 3 !== 0) continue;
+      // spouse pulls hardest
+      if (a.spouse >= 0) {
+        const sp = this.agentById.get(a.spouse);
+        if (sp && sp.ideology != null && sp.ideology !== a.ideology) {
+          const I = this.ideologyById.get(sp.ideology);
+          if (I && tryConvert(this, a, I, 0.5, 0.7)) converted++;
+        }
+      }
+      // then the home settlement's institutions
+      if (a.home >= 0) {
+        const s = this.settlementById.get(a.home);
+        if (s && s.dominantIdeology != null && s.dominantIdeology !== a.ideology) {
+          const I = this.ideologyById.get(s.dominantIdeology);
+          if (I && tryConvert(this, a, I, 0.28, 0.5)) converted++;
+        }
+      }
+    }
+    this.totals.conversions += converted;
+  }
+
+  // ---- schism: big, unstable, zealous congregations split -------------
+  checkSchisms() {
+    for (const s of this.settlements) {
+      if (s.dead || s.members < 45 || s.dominantIdeology == null) continue;
+      const I = this.ideologyById.get(s.dominantIdeology);
+      if (!I || I.zeal < 0.55 || s.stability > 0.45) continue;
+      if (this.rand() > 0.3) continue;
+      const fork = createIdeology(this, null, I);
+      if (!fork) continue;
+      let moved = 0;
+      for (const a of this.agents) {
+        if (!a.dead && a.home === s.id && a.ideology === I.id && this.rand() < 0.35) {
+          a.ideology = fork.id; a.conviction = 0.55 + this.rand() * 0.3; moved++;
+        }
+      }
+      if (moved > 3) {
+        this.addEvent(`SCHISM in ${s.name}: ${fork.name} splits from ${I.name}`, 'bad', '🕯️');
+        this.iconFlash(s.x, s.y, '🕯️', 80);
+      }
+    }
+  }
+
+  // ---- colony founding: overcrowded cities send out whole families ----
+  evaluateColonies() {
+    const w = this.world;
+    for (const s of this.settlements) {
+      if (s.dead || s.members < 42) continue;
+      const cap = Math.max(20, s.infraCap || 40);
+      const pressure = s.members / cap + (s.famineT > 25 ? 0.35 : 0) + (1 - s.stability) * 0.3;
+      if (pressure < 1.18 || this.rand() > (pressure - 1.1)) continue;
+      // viable land: fertile + watered, away from existing settlements
+      const site = findBestTile(w, s.x, s.y, 30, (i, x, y) => {
+        if (w.fertility[i] < 0.42 || w.water[i] < 32) return 0;
+        const d = Math.sqrt(dist2(x, y, s.x, s.y));
+        if (d < 13) return 0;
+        for (const o of this.settlements) {
+          if (!o.dead && dist2(o.x, o.y, x, y) < 150) return 0;
+        }
+        return w.fertility[i] + w.food[i] / 100 - this.dangerSignal[i] * 0.2;
+      });
+      if (site < 0) continue;
+      const sx = site % w.w + 0.5, sy = (site / w.w | 0) + 0.5;
+      // recruit WHOLE FAMILIES (kids travel with their parents, never alone)
+      const byFamily = new Map();
+      for (const a of this.agents) {
+        if (a.dead || a.home !== s.id) continue;
+        let g = byFamily.get(a.familyId);
+        if (!g) { g = { adults: 0, members: [] }; byFamily.set(a.familyId, g); }
+        g.members.push(a);
+        if (a.age >= 16) g.adults++;
+      }
+      const party = [];
+      let foundingFamilyId = -1;
+      for (const [fid, g] of byFamily) {
+        if (g.adults < 1) continue; // no unaccompanied children
+        if (party.length && party.length + g.members.length > 18) continue;
+        if (foundingFamilyId < 0) foundingFamilyId = fid;
+        party.push(...g.members);
+        if (party.length >= 10) break;
+      }
+      const adults = party.filter(a => a.age >= 16).length;
+      if (adults < 4) continue;
+      // found the colony; migrants carry a share of the granary
+      const c = createSettlement(this, sx, sy, party.map(p => p.id));
+      c.parentSettlementId = s.id;
+      c.parentName = s.name;
+      c.originReason = s.famineT > 25 ? 'famine' : 'overcrowding';
+      c.foundingFamilyId = foundingFamilyId;
+      c.foundingIdeologyId = s.dominantIdeology ?? null;
+      c.foodStore = Math.min(40, s.foodStore * 0.18); s.foodStore -= c.foodStore;
+      c.woodStore = s.woodStore * 0.15; s.woodStore -= c.woodStore;
+      c.stoneStore = s.stoneStore * 0.15; s.stoneStore -= c.stoneStore;
+      c.wealth = s.wealth * 0.1; s.wealth -= c.wealth;
+      this.settlements.push(c);
+      this.settlementById.set(c.id, c);
+      for (const m of party) {
+        m.home = c.id;
+        remember(m, `set out to found ${c.name}`);
+        if (m.age >= 12) {
+          m.state = 'migrating'; m.stateT = 0;
+          m.tx = sx + (this.rand() - 0.5) * 2; m.ty = sy + (this.rand() - 0.5) * 2;
+          m.hasTarget = true;
+          this.recordMigrationTrail(m.x, m.y, 2);
+        } // children simply follow their guardians
+        if (m.age >= 16) learnReward(this, m, 'migrating', 0.6);
+      }
+      s.stability = clamp(s.stability + 0.06, 0, 1); // pressure vents
+      this.totals.colonies++;
+      this.addEvent(`${c.name} founded as a colony of ${s.name} (${c.originReason}, ${party.length} settlers)`, 'good', '⛺');
+      this.iconFlash(sx, sy, '⛺', 90);
+      break; // at most one colony per evaluation pass
+    }
+  }
+
   travelBoostAt(x, y, agent) {
     const tx = x | 0, ty = y | 0;
     if (tx < 0 || ty < 0 || tx >= this.world.w || ty >= this.world.h) return 1;
@@ -459,6 +681,8 @@ export class Simulation {
     s.woodStore += clamp(profile.wood / 55, 0, 1.8) * labor * 0.16;
     s.stoneStore += clamp(profile.stone / 45, 0, 1.8) * labor * 0.10;
     if (s.tech >= 4 || s.buildings.workshop > 0) s.metalStore += clamp(profile.metal / 38, 0, 1.6) * labor * 0.07;
+    if (profile.fish > 4) s.foodStore += clamp(profile.fish / 40, 0, 1.5) * labor * 0.22;
+    if (profile.salt > 4) s.wealth += clamp(profile.salt / 45, 0, 1) * labor * 0.03;
     if (profile.gems > 0) {
       const luxury = clamp(profile.gems / 18, 0, 1.4) * labor * 0.025;
       s.luxuryStore += luxury;
@@ -556,7 +780,7 @@ export class Simulation {
     const w = this.world;
     const x0 = Math.max(0, (s.x | 0) - radius), x1 = Math.min(w.w - 1, (s.x | 0) + radius);
     const y0 = Math.max(0, (s.y | 0) - radius), y1 = Math.min(w.h - 1, (s.y | 0) + radius);
-    const out = { food: 0, wood: 0, stone: 0, metal: 0, gems: 0, water: 0, river: 0 };
+    const out = { food: 0, wood: 0, stone: 0, metal: 0, gems: 0, water: 0, river: 0, herbs: 0, clay: 0, fish: 0, salt: 0 };
     let weight = 0;
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
@@ -569,6 +793,10 @@ export class Simulation {
         out.stone += w.stone[i] * k;
         out.metal += w.metal[i] * k;
         out.gems += w.gems[i] * k;
+        out.herbs += (w.herbs ? w.herbs[i] : 0) * k;
+        out.clay += (w.clay ? w.clay[i] : 0) * k;
+        out.fish += (w.fish ? w.fish[i] : 0) * k;
+        out.salt += (w.salt ? w.salt[i] : 0) * k;
         out.water += w.water[i] * k;
         out.river += (w.river[i] || 0) * k;
         weight += k;
@@ -907,6 +1135,8 @@ export class Simulation {
         if (b && !b.sick && !b.dead &&
             this.rand() < 0.05 * P.diseaseSeverity * (1 - b.immunity)) {
           b.sick = true;
+          const dti = tileIndex(w, b.x, b.y);
+          this.dangerSignal[dti] = Math.min(6, this.dangerSignal[dti] + 0.5);
         }
       }
     }
@@ -1076,6 +1306,23 @@ export class Simulation {
       ? live.reduce((acc, s) => acc + (1 - s.stability), 0) / live.length
       : 0;
 
+    // orphan census (bounded: only under-12s, map lookups only)
+    let orphans = 0, children = 0;
+    for (const a of this.agents) {
+      if (a.dead || a.age >= 12) continue;
+      children++;
+      const m = a.mother >= 0 && this.agentById.get(a.mother);
+      const f = a.father >= 0 && this.agentById.get(a.father);
+      const g = a.guardian >= 0 && this.agentById.get(a.guardian);
+      if (!m && !f && !g) orphans++;
+    }
+    const ideoSnapshot = this.ideologies
+      .filter(I => I.followers > 0)
+      .sort((x, y) => y.followers - x.followers)
+      .slice(0, 8)
+      .map(I => ({ id: I.id, name: I.name, type: I.type, followers: I.followers,
+                   zeal: I.zeal, tolerance: I.tolerance, hue: I.hue,
+                   parent: I.parentIdeologyId }));
     this.stats = {
       tick: this.tick,
       year: (this.tick / TICKS_PER_YEAR) | 0,
@@ -1095,7 +1342,13 @@ export class Simulation {
       mostAggressive: angriest ? `${angriest.name}` : '—',
       collapseRisk,
       inequality: gini,
-      tempOffset: this.climate.tempOffset
+      tempOffset: this.climate.tempOffset,
+      marriages: this.totals.marriages,
+      colonies: this.totals.colonies,
+      conversions: this.totals.conversions,
+      orphans, children,
+      avgReward: this.totals.rewardCount ? this.totals.rewardSum / this.totals.rewardCount : 0,
+      ideologies: ideoSnapshot
     };
   }
 

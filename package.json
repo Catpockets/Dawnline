@@ -8,7 +8,9 @@
     "build": "vite build",
     "build:standalone": "node scripts/build-standalone.mjs",
     "preview": "vite preview",
-    "test:engine": "node test/engine-test.js"
+    "test:engine": "node test/engine-test.js",
+    "test:ai": "node test/ai-test.js",
+    "test:bundle": "node scripts/test-bundle.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

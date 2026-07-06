@@ -14,7 +14,7 @@ const KV = ({ k, v }) => h('div', { className: 'kv' },
  * snapshot object (copied out of the engine 4×/sec) so it stays live while
  * the simulation runs.
  */
-export default function Inspector({ data, onClose }) {
+export default function Inspector({ data, onClose, onFollow }) {
   if (!data) return null;
 
   if (data.type === 'agent') {
@@ -22,7 +22,8 @@ export default function Inspector({ data, onClose }) {
     return h('div', { className: 'inspector' },
       h('h4', null, `${a.sex === 'F' ? '♀' : '♂'} ${a.name} `, h('button', { onClick: onClose }, '✕')),
       h('div', { className: 'sub' },
-        `${a.stateLabel}${a.pregnant ? ' · 🤰 expecting' : ''} · age ${a.age} · ${a.homeName}`),
+        `${a.stateLabel}${a.pregnant ? ' · 🤰 expecting' : ''} · ${a.stage}, ${a.age} · ${a.homeName}${a.ideologyName ? ' · ' + a.ideologyName : ''}`),
+      onFollow ? h('button', { className: 'tiny', style: { marginBottom: 7 }, onClick: () => onFollow(a.id) }, '🎥 Follow') : null,
       h(KV, { k: 'Health', v: a.health }), h(Bar, { v: a.health, color: a.health > 50 ? 'var(--good)' : 'var(--bad)' }),
       h(KV, { k: 'Hunger', v: a.hunger }), h(Bar, { v: a.hunger, color: a.hunger > 60 ? 'var(--bad)' : 'var(--warn)' }),
       h(KV, { k: 'Thirst', v: a.thirst }), h(Bar, { v: a.thirst, color: '#7dd3fc' }),
@@ -44,6 +45,24 @@ export default function Inspector({ data, onClose }) {
       a.memory.length > 0 ? h(React.Fragment, null,
         h('div', { className: 'kv' }, h('span', { className: 'k' }, 'Recent memory')),
         a.memory.map((m, i) => h('div', { key: i, className: 'mem' }, `“${m}”`))
+      ) : null,
+      // ---- AI MIND: why this agent chose what it chose ----
+      a.ai ? h('div', { className: 'ai-mind' },
+        h('div', { className: 'hdr' }, '🧠 AI MIND'),
+        h('div', { className: 'ai-row' }, h('span', { className: 'k' }, 'Chosen action'), h('span', { className: 'v' }, a.ai.action)),
+        h('div', { className: 'ai-row' }, h('span', { className: 'k' }, 'Life-stage rule'), h('span', { className: 'v' }, a.ai.legality)),
+        a.ai.top.map(([nm, sc, note], i) => h('div', { key: i, className: 'ai-row' },
+          h('span', { className: 'k' }, `${i + 1}. ${nm}`),
+          h('span', { className: 'v' + (note ? ' block' : '') }, note || (+sc).toFixed(2)))),
+        a.ai.learned.length ? h('div', { className: 'ai-row' },
+          h('span', { className: 'k' }, 'Learned prefs'), h('span', { className: 'v' }, a.ai.learned.join(' · '))) : null,
+        a.ai.rewards.length ? h('div', { className: 'ai-row' },
+          h('span', { className: 'k' }, 'Recent rewards'),
+          h('span', { className: 'v' }, a.ai.rewards.map(r => `${r.a} ${r.r > 0 ? '+' : ''}${r.r}`).join(', '))) : null,
+        h('div', { className: 'ai-row' }, h('span', { className: 'k' }, 'Avg outcome'), h('span', { className: 'v' }, a.ai.ema)),
+        h('div', { className: 'ai-row' }, h('span', { className: 'k' }, 'Exploration'), h('span', { className: 'v' }, a.ai.eps)),
+        a.ai.mentor ? h('div', { className: 'ai-row' },
+          h('span', { className: 'k' }, 'Learned from'), h('span', { className: 'v' }, a.ai.mentor)) : null
       ) : null
     );
   }
@@ -77,7 +96,9 @@ export default function Inspector({ data, onClose }) {
   const s = data;
   return h('div', { className: 'inspector' },
     h('h4', null, `⬢ ${s.name} `, h('button', { onClick: onClose }, '✕')),
-    h('div', { className: 'sub' }, `${s.archetype} · founded Y${s.founded} · ${s.dominant} culture`),
+    h('div', { className: 'sub' },
+      `${s.archetype}${s.specialty ? ' · known for ' + s.specialty : ''} · founded Y${s.founded} · ${s.dominant} culture`,
+      s.lineage ? h('div', { style: { marginTop: 2, color: 'var(--warn)' } }, s.lineage) : null),
     h(KV, { k: 'Population', v: s.members }),
     h(KV, { k: 'Stability', v: `${s.stability}%` }), h(Bar, { v: s.stability, color: s.stability > 50 ? 'var(--good)' : 'var(--bad)' }),
     h(KV, { k: 'Food store', v: s.foodStore }),

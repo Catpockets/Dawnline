@@ -8,8 +8,13 @@
 import { clamp, dist2 } from './rng.js';
 import { TERRAIN, walkable, tileIndex, findBestTile } from './world.js';
 import { firstNameFor, surname } from './names.js';
+import { lifeStageOf, canAgentPerformAction, getSafeFallbackAction, physicalAbility, riskPenalty } from './lifecycle.js';
+import { buildContext, qValue, learnReward, socialTransfer, explorationRate, CTX_DIM, Q_WEIGHT } from './learning.js';
+import { ideologyActionBias } from './ideologies.js';
+import { tryMarry, findGuardian } from './families.js';
 
 export const TICKS_PER_YEAR = 30;
+export const PREGNANCY_TICKS = Math.round(TICKS_PER_YEAR * 0.75); // ≈ 9 months
 
 let SKILL_NAMES = ['gather', 'farm', 'build', 'fight', 'trade', 'heal', 'explore'];
 
@@ -41,8 +46,19 @@ export function createAgent(sim, x, y, opts = {}) {
     mother: opts.mother !== undefined ? opts.mother : -1,
     father: opts.father !== undefined ? opts.father : -1,
     children: [], guardian: -1,
+    familyId: opts.familyId !== undefined ? opts.familyId : sim.nextFamilyId++,
     pregnant: false, pregT: 0,
     lastHurt: null,
+    // life stage cache (recomputed as age advances)
+    lifeStage: 'adult',
+    hasYoungKids: false, grownFlag: false,
+    // ideology
+    ideology: opts.ideology !== undefined ? opts.ideology : null,
+    conviction: 0.4 + r() * 0.3,
+    tolerance: 0.2 + r() * 0.6,
+    // contextual-bandit learner (lazily allocated per action, bounded)
+    theta: {}, lastCtx: null, lastAction: null,
+    rewards: [], rewardEMA: 0, expCount: 0, learnedFrom: null, debugChoice: null,
     rel: new Map(),          // id -> -1..1 trust/hostility
     memory: [],              // short ring of recent event strings
     state: 'idle', stateT: 0,
@@ -61,6 +77,7 @@ export function createAgent(sim, x, y, opts = {}) {
   for (const s of SKILL_NAMES) a.skills[s] /= total;
   const spec = SKILL_NAMES[(r() * SKILL_NAMES.length) | 0];
   a.skills[spec] += 0.25;
+  a.lifeStage = lifeStageOf(a.age);
   // mild sex-based stat shifts (population-level flavour, not hard gates)
   if (sex === 'M') {
     a.skills.fight = Math.min(1, a.skills.fight * 1.3);
@@ -165,9 +182,32 @@ function decide(sim, a) {
   }
   add('idle', 0.15);
 
-  // pick argmax
-  let best = 'idle', bestS = -1;
-  for (const [name, s] of scores) if (s > bestS) { bestS = s; best = name; }
+  // ---- combine: utility + learned Q + ideology bias + exploration,
+  //      hard-filtered by the life-stage permission matrix -------------
+  const learningOn = sim.params.enableLearning !== false;
+  const ctx = a.lastCtx || (a.lastCtx = new Float32Array(CTX_DIM));
+  buildContext(sim, a, ctx);
+  const eps = learningOn ? explorationRate(a) : 0;
+  let best = null, bestS = -Infinity;
+  const debug = sim.debugAgentId === a.id ? [] : null;
+  for (const [name, s] of scores) {
+    if (!canAgentPerformAction(a, name)) {
+      if (debug) debug.push([name, s, 'blocked: ' + a.lifeStage]);
+      continue;
+    }
+    let final = s;
+    if (learningOn) final += Q_WEIGHT * qValue(a, name, ctx) + eps * sim.rand();
+    if (sim.params.enableIdeology !== false) final += ideologyActionBias(sim, a, name);
+    final -= riskPenalty(a, name);
+    if (debug) debug.push([name, final]);
+    if (final > bestS) { bestS = final; best = name; }
+  }
+  if (!best) best = getSafeFallbackAction(a); // everything illegal → safe
+  a.lastAction = best;
+  if (debug) {
+    debug.sort((x, y) => (y[1] || 0) - (x[1] || 0));
+    a.debugChoice = { top: debug.slice(0, 5), eps: eps.toFixed(2), stage: a.lifeStage };
+  }
   setState(sim, a, best);
 }
 
@@ -274,6 +314,26 @@ export function updateAgent(sim, a) {
   // remember tick-start position so the renderer can interpolate at slow speeds
   a.px = a.x; a.py = a.y;
 
+  // ---- life stage bookkeeping (cheap; staggered heavy parts) ----
+  a.lifeStage = lifeStageOf(a.age);
+  if ((sim.tick + a.id) % 30 === 0) {
+    // does this agent have living young children? (bounded by children[])
+    let young = false;
+    for (const cid of a.children) {
+      const c = sim.agentById.get(cid);
+      if (c && !c.dead && c.age < 12) { young = true; break; }
+    }
+    a.hasYoungKids = young;
+  }
+  // reaching adulthood rewards the parents' caregiving strategies
+  if (!a.grownFlag && a.age >= 16) {
+    a.grownFlag = true;
+    for (const pid of [a.mother, a.father]) {
+      const p = pid >= 0 ? sim.agentById.get(pid) : null;
+      if (p && !p.dead) learnReward(sim, p, 'socializing', 1.0);
+    }
+  }
+
   // ---- physiological drift ----
   a.age += 1 / TICKS_PER_YEAR;
   const heat = clamp(w.temp[ti] + sim.climate.tempOffset, 0, 1.4);
@@ -300,7 +360,9 @@ export function updateAgent(sim, a) {
   if (a.sick) {
     dmg += 0.45 * P.diseaseSeverity * (1 - a.immunity);
     a.sickT++;
-    const med = home ? home.tech >= 8 ? 0.05 : 0 : 0;
+    // medicine tech OR a local herb supply improves recovery odds
+    const herbBonus = home && home.resourceProfile && home.resourceProfile.herbs > 8 ? 0.04 : 0;
+    const med = (home ? (home.tech >= 8 ? 0.05 : 0) : 0) + herbBonus;
     if (sim.rand() < 0.02 + a.immunity * 0.03 + med) { a.sick = false; a.immunity = clamp(a.immunity + 0.3, 0, 0.95); }
   }
   if (dmg > 0) a.health -= dmg;
@@ -317,11 +379,15 @@ export function updateAgent(sim, a) {
     return;
   }
 
-  // ---- children: stay with family, no independent utility AI --------------
-  // (fixes toddlers wandering the wilderness alone)
-  if (a.age < 14) {
+  // ---- infants & children: follow-guardian behaviour, never decide() ------
+  if (a.age < 12) {
     updateChild(sim, a, home);
     return;
+  }
+  // adolescents work, but stay tethered to home
+  if (a.lifeStage === 'adolescent' && home && (sim.tick + a.id) % 20 === 0 &&
+      dist2(a.x, a.y, home.x, home.y) > 120) {
+    setState(sim, a, 'returningHome');
   }
 
   // ---- re-decide periodically or when current state has run its course ----
@@ -330,7 +396,7 @@ export function updateAgent(sim, a) {
   if (a.stateT > staleness || (!a.hasTarget && a.stateT > 4)) decide(sim, a);
 
   // ---- behave according to FSM state ----
-  const speed = 0.28 * (0.5 + a.energy / 200) * (a.state === 'fleeing' ? 1.5 : 1);
+  const speed = 0.28 * (0.5 + a.energy / 200) * (a.state === 'fleeing' ? 1.5 : 1) * physicalAbility(a.lifeStage);
   switch (a.state) {
     case 'seekFood': {
       if (move(sim, a, speed)) {
@@ -339,8 +405,10 @@ export function updateAgent(sim, a) {
         if (take > 0.3) {
           w.food[ti] -= take; a.inv.food += take;
           reinforce(a, 'gather', 0.5);
+          learnReward(sim, a, 'seekFood', 0.6);
+          if (sim.foodSignal) sim.foodSignal[ti] = Math.min(6, sim.foodSignal[ti] + 0.8);
           if (a.inv.food > 10) decide(sim, a);
-        } else { reinforce(a, 'gather', -0.3); decide(sim, a); }
+        } else { reinforce(a, 'gather', -0.3); learnReward(sim, a, 'seekFood', -0.3); decide(sim, a); }
       }
       break;
     }
@@ -360,6 +428,7 @@ export function updateAgent(sim, a) {
       if (move(sim, a, speed) && home) {
         // deposit surplus into communal storage → settlements accumulate food
         const deposit = Math.max(0, a.inv.food - 4);
+        if (deposit > 3) learnReward(sim, a, 'returningHome', 0.4);
         home.foodStore += deposit; a.inv.food -= deposit;
         home.woodStore += a.inv.wood; a.inv.wood = 0;
         home.stoneStore += a.inv.stone; a.inv.stone = 0;
@@ -383,6 +452,7 @@ export function updateAgent(sim, a) {
         if (a.state === 'migrating') {
           // migration success = found somewhere better than where we started
           reinforce(a, 'explore', w.food[ti] > 20 ? 0.5 : -0.2);
+          learnReward(sim, a, 'migrating', w.food[ti] > 20 ? 0.5 : -0.3);
           if (home && dist2(a.x, a.y, home.x, home.y) > 400) { a.home = -1; } // left for good
           sim.maybeFound(a); // homeless migrants may found new settlements
         }
@@ -401,14 +471,10 @@ export function updateAgent(sim, a) {
           const warmth = 0.05 + a.empathy * 0.05;
           remember(a, 'shared stories', b, warmth);
           remember(b, 'shared stories', a, warmth);
-          // marriage: opposite-sex singles who have grown to trust each other
-          if (a.spouse < 0 && b.spouse < 0 && a.sex !== b.sex &&
-              (a.rel.get(b.id) || 0) > 0.35 &&
-              a.age > 16 && a.age < 50 && b.age > 16 && b.age < 50) {
-            a.spouse = b.id; b.spouse = a.id;
-            remember(a, `married ${b.firstName}`, b, 0.4);
-            remember(b, `married ${a.firstName}`, a, 0.4);
-          }
+          // marriage: trusted opposite-sex singles (kin/ideology-checked)
+          if ((a.rel.get(b.id) || 0) > 0.35) tryMarry(sim, a, b);
+          // social learning: pick up habits from more successful company
+          if ((sim.tick + a.id) % 3 === 0) socialTransfer(sim, a, b);
           break;
         }
         if (a.stateT > 8) decide(sim, a);
@@ -424,7 +490,8 @@ export function updateAgent(sim, a) {
           const gain = sold * 0.4 * (1 + home.buildings.market * 0.15);
           a.inv.wealth += gain; home.wealth += gain * 0.3;
           reinforce(a, 'trade', 0.5);
-        } else reinforce(a, 'trade', -0.2);
+          learnReward(sim, a, 'trading', 0.5);
+        } else { reinforce(a, 'trade', -0.2); learnReward(sim, a, 'trading', -0.2); }
         decide(sim, a);
       }
       break;
@@ -437,6 +504,7 @@ export function updateAgent(sim, a) {
           if (b && b.sick && sim.rand() < a.skills.heal * 0.4) {
             b.sick = false; b.health = clamp(b.health + 8, 0, 100);
             remember(b, 'was healed', a, 0.25);
+            learnReward(sim, a, 'healing', 0.6);
             home.wealth += 0.2;
           }
         }
@@ -479,6 +547,8 @@ export function updateAgent(sim, a) {
     a.threatX = a.x + (sim.rand() - 0.5) * 2; a.threatY = a.y + (sim.rand() - 0.5) * 2;
     remember(a, 'attacked by predators');
     a.lastHurt = 'wild animals';
+    if (a.lastAction) learnReward(sim, a, a.lastAction, -0.7);
+    if (sim.dangerSignal) sim.dangerSignal[ti] = Math.min(6, sim.dangerSignal[ti] + 1.4);
   }
 
   // ---- group dynamics for the homeless: found or join settlements ----
@@ -516,12 +586,8 @@ export function updateAgent(sim, a) {
     for (const id of ids) {
       if (id === a.id) continue;
       const b = sim.agentById.get(id);
-      if (b && !b.dead && b.spouse < 0 && b.sex !== a.sex &&
-          b.age > 16 && b.age < 50 && sim.rand() < 0.5) {
-        a.spouse = b.id; b.spouse = a.id;
-        remember(a, `married ${b.firstName}`, b, 0.4);
-        remember(b, `married ${a.firstName}`, a, 0.4);
-        break;
+      if (b && !b.dead && b.sex !== a.sex && sim.rand() < 0.5) {
+        if (tryMarry(sim, a, b)) break;
       }
     }
   }
@@ -542,7 +608,7 @@ export function updateAgent(sim, a) {
   // pregnancy progresses; birth after ~9 months (24 ticks)
   if (a.pregnant) {
     a.pregT++;
-    if (a.pregT >= 24) sim.giveBirth(a);
+    if (a.pregT >= PREGNANCY_TICKS) sim.giveBirth(a);
   }
 
   // ---- auto-deposit surplus when passing near home ----
@@ -572,14 +638,22 @@ function resolveCombat(sim, a, b) {
   remember(a, 'fought', b, -0.3);
   remember(b, 'was attacked', a, -0.5);
   sim.flashes.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, ttl: 20, kind: 'fight' });
+  if (sim.dangerSignal) {
+    const dti = ((b.y | 0) * sim.world.w + (b.x | 0));
+    sim.dangerSignal[dti] = Math.min(6, sim.dangerSignal[dti] + 1.2);
+  }
   if (b.health <= 0) {
     a.kills++;
     a.inv.food += b.inv.food * 0.7; a.inv.wealth += b.inv.wealth * 0.7;
     reinforce(a, 'raid', 0.8);
+    learnReward(sim, a, 'fighting', 0.8);
     sim.killAgent(b, 'violence', a);
   } else if (a.health < 30) {
     reinforce(a, 'raid', -0.6);
+    learnReward(sim, a, 'fighting', -0.7);
     a.fear = 80; setState(sim, a, 'fleeing');
+  } else {
+    learnReward(sim, b, b.lastAction || 'fleeing', -0.4); // getting hurt teaches caution
   }
 }
 
@@ -590,12 +664,13 @@ function resolveCombat(sim, a, b) {
 // --------------------------------------------------------------------------
 function updateChild(sim, a, home) {
   a.state = 'child';
-  // find a living caretaker: mother first, then father, then guardian
-  let care = null;
-  for (const id of [a.mother, a.father, a.guardian]) {
-    if (id >= 0) {
-      const p = sim.agentById.get(id);
-      if (p && !p.dead) { care = p; break; }
+  const care = findGuardian(sim, a);
+  // children learn by WATCHING: slow, steady absorption of the
+  // caretaker's learned behaviour + a trickle of their skills
+  if (care && (sim.tick + a.id) % 30 === 0 && a.age >= 3) {
+    socialTransfer(sim, a, care, 0.1);
+    for (const k of Object.keys(a.skills)) {
+      a.skills[k] = clamp(a.skills[k] + care.skills[k] * 0.004, 0, 1);
     }
   }
   if (care) {

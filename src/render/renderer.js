@@ -203,6 +203,45 @@ export class Renderer {
       for (let i = 0; i < n; i++) heat(i, dm[i], [255, 180, 80]);
     } else if (this.overlay === 'trade') {
       for (let i = 0; i < n; i++) heat(i, sim.tradeMap[i] / 3.5, [95, 225, 245]);
+    } else if (this.overlay === 'food-signal') {
+      for (let i = 0; i < n; i++) heat(i, sim.foodSignal[i] / 2.5, [140, 245, 120]);
+    } else if (this.overlay === 'danger-signal') {
+      for (let i = 0; i < n; i++) heat(i, sim.dangerSignal[i] / 2.5, [255, 70, 70]);
+    } else if (this.overlay === 'migration') {
+      for (let i = 0; i < n; i++) heat(i, sim.migrationMap[i] / 3.5, [255, 205, 100]);
+    } else if (this.overlay === 'resources') {
+      // strongest specialty deposit per tile, color-coded
+      const KINDS = [
+        [w.herbs, [90, 230, 120]], [w.clay, [222, 148, 90]], [w.salt, [240, 240, 235]],
+        [w.fish, [90, 190, 250]], [w.metal, [170, 175, 190]], [w.gems, [200, 120, 250]]
+      ];
+      for (let i = 0; i < n; i++) {
+        let bv = 6, bc = null;
+        for (const [layer, col] of KINDS) {
+          if (layer && layer[i] > bv) { bv = layer[i]; bc = col; }
+        }
+        if (bc) set(i, bc[0], bc[1], bc[2], Math.min(230, 60 + bv * 3.4));
+      }
+    } else if (this.overlay === 'ideology') {
+      // settlements glow in their dominant creed's color
+      for (const s of sim.settlements) {
+        if (s.dead || s.dominantIdeology == null) continue;
+        const I = sim.ideologyById.get(s.dominantIdeology);
+        if (!I) continue;
+        const col = hueRgb(I.hue);
+        const R = 5 + Math.sqrt(s.members) * 1.6;
+        const x0 = Math.max(0, (s.x - R) | 0), x1 = Math.min(w.w - 1, (s.x + R) | 0);
+        const y0 = Math.max(0, (s.y - R) | 0), y1 = Math.min(w.h - 1, (s.y + R) | 0);
+        for (let y = y0; y <= y1; y++) {
+          for (let x = x0; x <= x1; x++) {
+            const dd = Math.hypot(x - s.x, y - s.y);
+            if (dd > R) continue;
+            const i = y * w.w + x;
+            const v = (1 - dd / R) * 0.85;
+            if (v * 210 > d[i * 4 + 3]) set(i, col[0], col[1], col[2], v * 210);
+          }
+        }
+      }
     } else if (['influence', 'tech', 'wealth', 'culture'].includes(this.overlay)) {
       // settlement-field overlays: paint radial gradients per settlement
       for (const s of sim.settlements) {
@@ -354,7 +393,11 @@ export class Renderer {
     for (const a of sim.agents) {
       if (a.dead) continue;
       let fill;
-      if (a.sick) fill = 'rgba(150, 255, 90, 0.95)';
+      if (this.overlay === 'ideology' && a.ideology != null) {
+        const I = sim.ideologyById.get(a.ideology);
+        fill = I ? `hsla(${I.hue}, 85%, 66%, 0.95)` : 'rgba(200,200,200,0.8)';
+      }
+      else if (a.sick) fill = 'rgba(150, 255, 90, 0.95)';
       else if (a.state === 'fighting') fill = 'rgba(255, 70, 70, 0.95)';
       else if (a.home >= 0) {
         const s = sim.settlementById.get(a.home);
@@ -434,6 +477,54 @@ export class Renderer {
         ctx.lineWidth = 0.3;
         ctx.beginPath(); ctx.arc(f.x, f.y, (f.r || 9) * (0.4 + t * 0.8), 0, 6.283); ctx.stroke();
       }
+    }
+
+    // --- family circle highlighting for the selected agent ---
+    if (this.selected && this.selected.type === 'agent') {
+      const a = sim.agentById.get(this.selected.id);
+      if (a) {
+        const ring = (m, color, r) => {
+          ctx.strokeStyle = color; ctx.lineWidth = 0.12;
+          ctx.beginPath(); ctx.arc(m.x, m.y, r, 0, 6.283); ctx.stroke();
+          if (v.scale > 4) {
+            ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 0.07;
+            ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(m.x, m.y); ctx.stroke();
+          }
+        };
+        if (a.spouse >= 0) {
+          const sp = sim.agentById.get(a.spouse);
+          if (sp) ring(sp, 'rgba(125, 211, 252, 0.95)', 0.55);
+        }
+        for (const pid of [a.mother, a.father]) {
+          const p = pid >= 0 ? sim.agentById.get(pid) : null;
+          if (p) ring(p, 'rgba(251, 191, 36, 0.9)', 0.5);
+        }
+        for (const cid of a.children) {
+          const c = sim.agentById.get(cid);
+          if (c) ring(c, 'rgba(74, 222, 128, 0.9)', 0.4);
+        }
+      }
+    }
+    // --- colony ↔ parent-city lineage link for the selected settlement ---
+    if (this.selected && this.selected.type === 'settlement') {
+      const s = sim.settlementById.get(this.selected.id);
+      const links = [];
+      if (s && s.parentSettlementId != null) {
+        const p = sim.settlementById.get(s.parentSettlementId);
+        if (p) links.push([s, p]);
+      }
+      if (s) {
+        for (const o of sim.settlements) {
+          if (!o.dead && o.parentSettlementId === s.id) links.push([o, s]);
+        }
+      }
+      ctx.setLineDash([0.5, 0.5]);
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.55)';
+      ctx.lineWidth = 0.12;
+      for (const [A, B] of links) {
+        ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+      }
+      ctx.setLineDash([]);
     }
 
     // --- selection highlight ---

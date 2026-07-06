@@ -32,6 +32,10 @@ export function generateWorld(w, h, seed, abundance = 1) {
     stone: new Float32Array(n),
     metal: new Float32Array(n),
     gems: new Float32Array(n),
+    clay: new Float32Array(n),
+    herbs: new Float32Array(n),
+    fish: new Float32Array(n),
+    salt: new Float32Array(n),
     river: new Float32Array(n),
     riverPaths: [],
     water: new Float32Array(n),     // drinkable-water access 0..100
@@ -109,7 +113,50 @@ export function generateWorld(w, h, seed, abundance = 1) {
 
   generateRivers(world, seed);
   computeWaterAccess(world);
+  depositResourceClusters(world, seed);
   return world;
+}
+
+// ---------------------------------------------------------------------------
+// UNEVEN RESOURCE DEPOSITS: each specialty resource is dropped as a handful
+// of deterministic radial blobs in terrain that suits it. One region gets
+// herbs, another salt, another iron-rich hills — so settlements specialize
+// and trade routes carry real economic meaning.
+// ---------------------------------------------------------------------------
+function depositResourceClusters(world, seed) {
+  const { w, h, terrain, elevation, fertility, water } = world;
+  const rand = mulberry32(seed ^ 0x7e50ca7e);
+  const blob = (layer, cx, cy, radius, amount) => {
+    const x0 = Math.max(0, cx - radius | 0), x1 = Math.min(w - 1, cx + radius | 0);
+    const y0 = Math.max(0, cy - radius | 0), y1 = Math.min(h - 1, cy + radius | 0);
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const d = Math.hypot(x - cx, y - cy);
+        if (d > radius) continue;
+        const i = y * w + x;
+        if (terrain[i] === TERRAIN.WATER && layer !== world.fish) continue;
+        layer[i] = Math.max(layer[i], amount * (1 - d / radius) * (0.7 + rand() * 0.6));
+      }
+    }
+  };
+  const clusters = Math.max(4, Math.round((w * h) / 1500));
+  // suitability tests per resource kind
+  const kinds = [
+    { layer: world.herbs, amount: 42, radius: 4, ok: (i) => fertility[i] > 0.5 && (terrain[i] === TERRAIN.FOREST || terrain[i] === TERRAIN.FERTILE) },
+    { layer: world.clay, amount: 40, radius: 4, ok: (i) => water[i] > 55 && terrain[i] !== TERRAIN.WATER && terrain[i] !== TERRAIN.MOUNTAIN },
+    { layer: world.salt, amount: 45, radius: 3, ok: (i) => terrain[i] === TERRAIN.DESERT || (elevation[i] > 0.34 && elevation[i] < 0.4 && water[i] > 70) },
+    { layer: world.fish, amount: 55, radius: 5, ok: (i) => terrain[i] === TERRAIN.WATER && elevation[i] > 0.2 }
+  ];
+  for (const k of kinds) {
+    let placed = 0;
+    for (let tries = 0; tries < 500 && placed < clusters; tries++) {
+      const x = (rand() * w) | 0, y = (rand() * h) | 0;
+      const i = y * w + x;
+      if (!k.ok(i)) continue;
+      blob(k.layer, x, y, k.radius, k.amount * world.abundance);
+      placed++;
+    }
+  }
 }
 
 function generateRivers(world, seed) {

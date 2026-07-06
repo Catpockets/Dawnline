@@ -7,6 +7,9 @@ import Controls, { WORLD_SIZES } from './ui/Controls.js';
 import Analytics from './ui/Analytics.js';
 import Inspector from './ui/Inspector.js';
 import Timeline from './ui/Timeline.js';
+import { searchAgents } from './engine/search.js';
+import { buildContext, topLearned, CTX_DIM } from './engine/learning.js';
+import { canAgentPerformAction } from './engine/lifecycle.js';
 
 const { useEffect, useRef, useState, useCallback } = React;
 const h = React.createElement;
@@ -41,6 +44,7 @@ export default function App() {
   const [, setSelection] = useState(null);
   const [armedGod, setArmedGod] = useState(null); // calamity awaiting a map click
   const [panel, setPanel] = useState(null); // mobile drawer: null | 'controls' | 'stats'
+  const followRef = useRef(null); // agent id the camera is following
   const armedGodRef = useRef(null);
   const [ui, setUi] = useState({ stats: {}, events: [], history: emptyHistory(), milestones: [], fps: 0, tps: 0, inspector: null });
 
@@ -93,6 +97,12 @@ export default function App() {
         // at sub-1× speeds, acc (0..1) is the progress toward the next tick:
         // use it to interpolate agent positions for butter-smooth motion
         if (speedRef.current < 1) alpha = Math.min(1, acc);
+      }
+      // follow-cam: keep the tracked agent centered while it lives
+      if (followRef.current != null && s) {
+        const fa = s.agentById.get(followRef.current);
+        if (fa && !fa.dead) { renderer.view.cx = fa.x; renderer.view.cy = fa.y; }
+        else followRef.current = null;
       }
       renderer.draw(alpha);
       frames++;
@@ -219,6 +229,8 @@ export default function App() {
         } else {
           const hit = rendererRef.current.pickAt(e.clientX - rect.left, e.clientY - rect.top);
           rendererRef.current.selected = hit;
+          if (simRef.current) simRef.current.debugAgentId = hit && hit.type === 'agent' ? hit.id : -1;
+          if (!hit || hit.type !== 'agent' || hit.id !== followRef.current) followRef.current = null;
           setSelection(hit);
         }
       }
@@ -254,7 +266,28 @@ export default function App() {
     if (canvasRef.current) canvasRef.current.style.cursor = armedGod ? 'crosshair' : '';
   }, [armedGod]);
 
-  const clearSelection = () => { setSelection(null); if (rendererRef.current) rendererRef.current.selected = null; };
+  const clearSelection = () => {
+    setSelection(null);
+    followRef.current = null;
+    if (rendererRef.current) rendererRef.current.selected = null;
+    if (simRef.current) simRef.current.debugAgentId = -1;
+  };
+  // user-driven search (runs only on keystrokes, never in the sim loop)
+  const onSearch = (q) => simRef.current ? searchAgents(simRef.current, q) : [];
+  const onPick = (id) => {
+    const s = simRef.current, r = rendererRef.current;
+    if (!s || !r) return;
+    const a = s.agentById.get(id);
+    if (!a) return;
+    r.selected = { type: 'agent', id };
+    s.debugAgentId = id;
+    r.view.cx = a.x; r.view.cy = a.y;
+    if (r.view.scale < 12) r.view.scale = 14;
+    followRef.current = id;
+    setSelection({ type: 'agent', id });
+    setPanel(null);
+  };
+  const onFollow = (id) => { followRef.current = followRef.current === id ? null : id; };
   const st = ui.stats || {};
 
   const legendRow = (bg, label, extra) => h('div', { className: 'row' },
@@ -320,10 +353,10 @@ export default function App() {
         armedGod ? h('div', { className: 'god-banner' },
           `☄ Click the map to unleash ${armedGod.toUpperCase()} — Esc or right-click to cancel`) : null,
         h(Timeline, { milestones: ui.milestones || [], tick: st.tick || 0, ticksPerYear: TICKS_PER_YEAR }),
-        h(Inspector, { data: ui.inspector, onClose: clearSelection })
+        h(Inspector, { data: ui.inspector, onClose: clearSelection, onFollow })
       ),
 
-      h(Analytics, { stats: ui.stats, history: ui.history, events: ui.events })
+      h(Analytics, { stats: ui.stats, history: ui.history, events: ui.events, onSearch, onPick })
     )
   );
 }
@@ -354,11 +387,30 @@ function buildInspector(sim, sel) {
     const father = a.father >= 0 ? sim.agentById.get(a.father) : null;
     let kidsAlive = 0;
     for (const cid of a.children) if (sim.agentById.get(cid)) kidsAlive++;
+    // ---- AI-mind explain block (built only for the selected agent) ----
+    const ctx = new Float32Array(CTX_DIM);
+    buildContext(sim, a, ctx);
+    const ideo = a.ideology != null ? sim.ideologyById.get(a.ideology) : null;
+    const ai = {
+      action: a.state,
+      legality: canAgentPerformAction(a, 'exploring')
+        ? 'all actions legal (adult)'
+        : `restricted: ${a.lifeStage} may not explore/fight/migrate alone`,
+      top: a.debugChoice ? a.debugChoice.top : [],
+      learned: topLearned(a, ctx, 3),
+      rewards: a.rewards.slice(-4),
+      ema: (a.rewardEMA || 0).toFixed(2),
+      eps: a.debugChoice ? a.debugChoice.eps : '—',
+      mentor: a.learnedFrom
+    };
     return {
       type: 'agent', id: a.id,
       name: `${a.firstName} ${a.lastName}`,
       sex: a.sex,
       pregnant: !!a.pregnant,
+      stage: a.lifeStage,
+      ideologyName: ideo ? ideo.name : null,
+      ai,
       stateLabel: a.state, age: a.age | 0,
       homeName: home ? `of ${home.name}` : 'nomad',
       health: a.health | 0, hunger: a.hunger | 0, thirst: a.thirst | 0,
@@ -403,8 +455,13 @@ function buildInspector(sim, sel) {
     .map(([k, v]) => `${k} ${(v * 100) | 0}%`);
   const buildings = Object.entries(s.buildings).filter(([, n]) => n > 0)
     .map(([k, n]) => `${k}×${n}`).join(' ') || 'none';
+  const parent = s.parentSettlementId != null ? sim.settlementById.get(s.parentSettlementId) : null;
   return {
     type: 'settlement', id: s.id, name: s.name,
+    specialty: s.specialty || null,
+    lineage: s.parentSettlementId != null
+      ? `⛺ colony of ${parent ? parent.name : s.parentName || 'a lost city'} (${s.originReason})`
+      : (s.originReason === 'exploration' ? null : null),
     archetype: s.archetype, dominant: dominantCulture(s),
     founded: (s.founded / TICKS_PER_YEAR) | 0,
     members: s.members,

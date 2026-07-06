@@ -336,3 +336,29 @@ select option { background: #0d1320; }
   .chip { font-size: 10px; padding: 3px 7px; }
   .inspector { max-height: 38%; }
 }
+
+/* ---------- agent search ---------- */
+.search-results { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; max-height: 210px; overflow-y: auto; }
+.search-hit {
+  text-align: left; display: flex; flex-direction: column; gap: 1px;
+  padding: 5px 9px; border-radius: 8px;
+}
+.search-hit b { font-size: 12px; color: var(--accent); }
+.search-hit span { font-size: 10px; color: var(--text-dim); }
+
+/* ---------- ideology list ---------- */
+.ideo-row { display: flex; align-items: center; gap: 7px; padding: 4px 2px; font-size: 11px; border-bottom: 1px dashed rgba(255,255,255,0.05); }
+.ideo-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; box-shadow: 0 0 6px currentColor; }
+.ideo-row .nm { color: var(--text); font-weight: 600; }
+.ideo-row .meta { color: var(--text-dim); font-size: 10px; margin-left: auto; text-align: right; }
+
+/* ---------- AI mind block ---------- */
+.ai-mind {
+  margin-top: 8px; padding: 8px; border-radius: 8px;
+  background: rgba(125, 211, 252, 0.06); border: 1px solid rgba(125, 211, 252, 0.22);
+}
+.ai-mind .hdr { font-size: 9.5px; letter-spacing: 0.12em; color: var(--accent2); font-weight: 700; margin-bottom: 5px; }
+.ai-row { display: flex; justify-content: space-between; font-size: 10.5px; padding: 1.5px 0; }
+.ai-row .k { color: var(--text-dim); }
+.ai-row .v { font-family: var(--mono); color: var(--text); }
+.ai-row .v.block { color: var(--bad); }

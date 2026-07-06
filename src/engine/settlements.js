@@ -129,6 +129,7 @@ export function updateSettlement(sim, s) {
   const cap = 18 + s.buildings.huts * 9;
   const infraCap = cap + s.buildings.farms * 35 + s.buildings.granary * 20 +
     s.buildings.market * 18 + Math.min(s.tech, 12) * 7;
+  s.infraCap = infraCap; // exposed for crowding context + colony pressure
   const capacityFactor = s.members < infraCap ? 1 : clamp(infraCap / Math.max(1, s.members), 0.04, 0.35);
   // births now emerge from agent-level marriage + pregnancy (agents.js);
   // the settlement contributes a 'family climate' factor read at conception.
@@ -185,6 +186,31 @@ export function updateSettlement(sim, s) {
 
   // ---- classification into archetypes (simple rule-based clustering) ----
   if (sim.tick % 30 === 0) s.archetype = classifySettlement(s);
+  // ---- economic specialization emerges from LOCAL resources ----
+  if (sim.tick % 60 === 0 && s.resourceProfile) s.specialty = specializationOf(s);
+}
+
+/**
+ * What is this settlement KNOWN for? Derived from its actual local
+ * resource profile + infrastructure — specialization is emergent,
+ * never randomly assigned.
+ */
+export function specializationOf(s) {
+  const p = s.resourceProfile;
+  if (!p) return null;
+  const scores = [
+    ['farming', (p.food / 60) * (1 + s.buildings.farms * 0.3)],
+    ['fishing', p.fish / 22],
+    ['mining', (p.stone + p.metal) / 55],
+    ['metallurgy', s.tech >= 6 ? p.metal / 16 : 0],
+    ['medicine', p.herbs / 16],
+    ['salt trade', p.salt / 18],
+    ['luxury goods', p.gems / 12],
+    ['commerce', s.tradePartners.size / 3.5]
+  ];
+  let best = null, bv = 0.85; // needs a clear edge to count as a specialty
+  for (const [k, v] of scores) if (v > bv) { bv = v; best = k; }
+  return best;
 }
 
 /** Convenience: instability penalty 0..0.8 used to damp growth. */
